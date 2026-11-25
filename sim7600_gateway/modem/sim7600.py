@@ -74,6 +74,7 @@ class Sim7600:
         self._urgent: asyncio.Queue[Urc] = asyncio.Queue()
         self._tasks: list[asyncio.Task] = []
         self._ring_task: asyncio.Task | None = None
+        self._watchdog_task: asyncio.Task | None = None
         self._recover_lock = asyncio.Lock()
 
         self._ringing = False
@@ -389,6 +390,7 @@ class Sim7600:
         self._incoming = False
         self._call_present = True
         self._status.state = ModemState.DIALING
+        self._start_call_watchdog()
         result = await channel.command(f"ATD{normalized};", timeout=20)
         if result.ok:
             self._status.state = ModemState.DIALING
@@ -601,7 +603,7 @@ class Sim7600:
                 self._status.caller = normalize_number(numbers[0]) or numbers[0]
             if self._ringing:
                 self._schedule_ring_settle(0.1)
-        elif name in ("NO CARRIER", "+CEND"):
+        elif name in ("NO CARRIER", "+CEND", "MISSED_CALL"):
             if self._active:
                 await self._finish_call("ended", answered=True)
             elif self._ringing:
@@ -610,7 +612,8 @@ class Sim7600:
             if "BEGIN" in urc.line.upper():
                 await self._mark_active()
             elif "END" in urc.line.upper():
-                await self._finish_call("ended", answered=self._active)
+                state = "ended" if self._active else "missed"
+                await self._finish_call(state, answered=self._active)
         elif name == "+CMTI":
             numbers = re.findall(r"(\d+)", urc.line.split(":", 1)[-1])
             if numbers:
@@ -646,12 +649,57 @@ class Sim7600:
             self._status.ringing = True
             self._status.state = ModemState.RINGING
             self._status.caller = None
+            self._start_call_watchdog()
         self._schedule_ring_settle(0.6)
 
     def _schedule_ring_settle(self, delay: float) -> None:
         if self._ring_task is not None:
             self._ring_task.cancel()
         self._ring_task = asyncio.create_task(self._ring_settle(delay), name="ring-settle")
+
+    def _start_call_watchdog(self) -> None:
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(
+                self._call_watchdog(), name="call-watchdog"
+            )
+
+    async def _call_watchdog(self) -> None:
+        """Reconcile call state with AT+CLCC.
+
+        Some SIM7600 firmwares drop ``NO CARRIER``/``MISSED_CALL`` URCs or never
+        send ``VOICE CALL: END``. Without this the core keeps a call ringing
+        forever and rejects all new calls as "gateway busy".
+        """
+        try:
+            while self._call_present and not self._stopped:
+                await asyncio.sleep(3)
+                channel = self._channel
+                if channel is None or not self._call_present:
+                    return
+                try:
+                    result = await channel.command("AT+CLCC", timeout=5)
+                except ModemNotConnected:
+                    return
+                if result.timed_out or not result.ok:
+                    continue
+                entries = [line for line in result.lines if line.startswith("+CLCC:")]
+                if not entries:
+                    if self._ringing:
+                        await self._finish_call("missed", answered=False)
+                    elif self._active:
+                        await self._finish_call("ended", answered=True)
+                    else:
+                        await self._finish_call("failed", answered=False)
+                    return
+                if not self._active:
+                    for line in entries:
+                        parts = line.split(":", 1)[-1].split(",")
+                        if len(parts) > 2 and parts[2].strip() == "0":
+                            await self._mark_active()
+                            break
+        finally:
+            if self._watchdog_task is asyncio.current_task():
+                self._watchdog_task = None
 
     async def _ring_settle(self, delay: float) -> None:
         with contextlib.suppress(asyncio.CancelledError):

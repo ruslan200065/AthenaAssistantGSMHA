@@ -120,6 +120,14 @@ class SimulatedModem:
             self._ring_timer = None
         self._push(f"\r\nVOICE CALL: END: {duration:06d}\r\n")
 
+    def silent_hangup(self) -> None:
+        """Drop the call without any URC (worst-case firmware behaviour)."""
+        self._call = None
+        self._call_number = None
+        if self._ring_timer is not None:
+            self._ring_timer.cancel()
+            self._ring_timer = None
+
     # ── internals ────────────────────────────────────────────────────────────
 
     def _push(self, chunk: str | bytes) -> None:

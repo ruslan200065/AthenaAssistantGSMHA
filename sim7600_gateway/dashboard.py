@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-DASHBOARD_HTML = """<!doctype html>
+DASHBOARD_HTML = r"""<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">

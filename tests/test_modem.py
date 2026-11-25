@@ -84,6 +84,41 @@ def test_ussd_reply() -> None:
     asyncio.run(scenario())
 
 
+def test_silent_hangup_is_reconciled_by_clcc() -> None:
+    async def scenario() -> None:
+        events: list[tuple[str, dict]] = []
+
+        async def on_event(event: str, data: dict) -> None:
+            events.append((event, data))
+
+        simulator = SimulatedModem()
+        modem = Sim7600(ModemConfig(mock=True), transport=simulator, on_event=on_event)
+        await modem.start()
+        try:
+            simulator.inject_call("+79991234567")
+            await asyncio.sleep(1.0)
+            assert modem.snapshot.ringing
+            # Firmware drops the call without NO CARRIER / VOICE CALL: END.
+            simulator.silent_hangup()
+            deadline = asyncio.get_running_loop().time() + 7
+            while asyncio.get_running_loop().time() < deadline:
+                if any(
+                    kind == "call.state" and data["state"] == "missed"
+                    for kind, data in events
+                ):
+                    break
+                await asyncio.sleep(0.2)
+            assert any(
+                kind == "call.state" and data["state"] == "missed"
+                for kind, data in events
+            )
+            assert not modem.snapshot.ringing
+        finally:
+            await modem.stop()
+
+    asyncio.run(scenario())
+
+
 def test_outgoing_call() -> None:
     async def scenario() -> None:
         events: list[tuple[str, dict]] = []
