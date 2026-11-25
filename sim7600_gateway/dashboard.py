@@ -142,7 +142,11 @@ async function ussd() {
 }
 $('tokenBtn').onclick = () => {
   const value = prompt('API token (config bridge.api_token):', token);
-  if (value !== null) { token = value.trim(); localStorage.setItem('gwToken', token); refresh(); connect(); }
+  if (value !== null) {
+    token = value.trim(); localStorage.setItem('gwToken', token);
+    $('stream').src = BASE + '/api/camera/stream.mjpg' + (token ? '?token='+encodeURIComponent(token) : '');
+    refresh(); connect();
+  }
 };
 function tile(label, value, unit='') {
   return `<div class="kv"><small>${label}</small><b>${value ?? '—'}${unit}</b></div>`;
