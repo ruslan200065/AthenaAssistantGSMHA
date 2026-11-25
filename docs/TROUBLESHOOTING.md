@@ -167,7 +167,8 @@ sudo apt install ffmpeg v4l-utils
 
 - REST `/api/calls/answer` делает только `ATA` — тишина by design. Голосовой ответ
   инициирует Athena командой `call {action:"answer", mode:"assistant"|"bridge"}`.
-- Голос требует `[audio_bridge].enabled=true`, `arecord`/`aplay` и USB-аудио модема
+- Голос требует `[audio_bridge].enabled=true` и либо serial PCM-порт
+  (`/dev/ttyUSB4`, опция `pcm_port`), либо `arecord`/`aplay` + USB-аудио модема
   (или `modem.mock`). Иначе команда вернёт failed
   `voice audio is unavailable...`; причина видна в `/api/status → voice_call.last_error`.
 - `bridge_call`/`mode=bridge` требует аудио и Athena. При ошибке bridge звонок
@@ -175,7 +176,8 @@ sudo apt install ffmpeg v4l-utils
 - Нет `assistant.reply` за 45 с → диалог закрывается; follow-up ждёт 3–8 с
   (минимум 3, по умолчанию 8).
 - Проверьте `arecord -l`, `aplay -l`; устройства в `[audio_bridge]` должны
-  существовать (`auto` ищет карту с «SIM7600»).
+  существовать (`auto` ищет карту с «SIM7600»). Основной путь — serial PCM:
+  `/dev/ttyUSB4` должен быть виден в контейнере (`uart: true`).
 - `AT+CPCMREG=1` может не поддерживаться прошивкой — смотрите warning в логах.
 - Эхо/тишина: проверьте маршрутизацию ALSA (`alsamixer`) и уровень микрофона.
 - Аудио включено в HA add-on (`audio_enabled: true`); в `config.example.toml`

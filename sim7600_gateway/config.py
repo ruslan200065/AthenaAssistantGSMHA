@@ -82,6 +82,11 @@ class AudioBridgeConfig:
     enabled: bool = False
     capture_device: str = "auto"
     playback_device: str = "auto"
+    # SIM7600 firmware often exposes call PCM as a serial interface instead of
+    # a USB audio card. This port is tried before ALSA.
+    pcm_port: str = "/dev/ttyUSB4"
+    pcm_baudrate: int = 115200
+    audio_transport: str = "auto"  # auto | serial | alsa
     sample_rate: int = 16000
     chunk_ms: int = 20
     # Experimental: AT+CHLD=2 holds the active call while the PCM bridge is
@@ -203,6 +208,13 @@ def apply_env(cfg: Config) -> Config:
     cfg.audio_bridge.playback_device = _env_str(
         "AUDIO_PLAYBACK_DEVICE", cfg.audio_bridge.playback_device
     )
+    cfg.audio_bridge.pcm_port = _env_str("PCM_PORT", cfg.audio_bridge.pcm_port)
+    cfg.audio_bridge.pcm_baudrate = _env_int(
+        "PCM_BAUDRATE", cfg.audio_bridge.pcm_baudrate
+    )
+    cfg.audio_bridge.audio_transport = _env_str(
+        "AUDIO_TRANSPORT", cfg.audio_bridge.audio_transport
+    )
     return cfg
 
 
@@ -253,6 +265,8 @@ def validate(cfg: Config) -> list[str]:
             warnings.append("audio_bridge.sample_rate must be between 8000 and 48000")
         if not 5 <= cfg.audio_bridge.chunk_ms <= 100:
             warnings.append("audio_bridge.chunk_ms must be between 5 and 100")
+        if cfg.audio_bridge.audio_transport not in ("auto", "serial", "alsa"):
+            warnings.append("audio_bridge.audio_transport must be auto|serial|alsa")
     if cfg.camera.input_format not in ("auto", "mjpg", "yuyv", "h264"):
         warnings.append("camera.input_format must be auto|mjpg|yuyv|h264")
     return warnings

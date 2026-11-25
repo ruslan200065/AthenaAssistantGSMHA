@@ -58,15 +58,18 @@ reset_gpio = 0                 # BCM pin when reset_method="gpio"
 sms_storage = "ME"             # ME | SM | MT — AT+CPMS storage
 
 [audio_bridge]
-# PCM bridge between the SIM7600 USB audio interface and an Athena speaker.
-# Also enables voice calls: after ATA the gateway listens to the line and plays
-# assistant replies. "auto" finds the SIM7600 card in `arecord -l`; if the card
-# is not found the gateway refuses to answer instead of using a random device.
+# PCM bridge between the SIM7600 and an Athena speaker. Also enables voice
+# calls: after ATA the gateway listens to the line and plays assistant replies.
+# The modem usually exposes call PCM as a raw serial port (ttyUSB4), NOT as an
+# ALSA card. That port is tried first; ALSA is only a fallback.
 enabled = false
-capture_device = "auto"
-playback_device = "auto"
-sample_rate = 16000            # SIM7600 USB audio usually supports 8/16/48 kHz
-chunk_ms = 20                  # PCM frame size for VAD/bridge
+pcm_port = "/dev/ttyUSB4"
+pcm_baudrate = 115200
+audio_transport = "auto"        # auto | serial | alsa
+capture_device = "auto"         # ALSA fallback only
+playback_device = "auto"        # ALSA fallback only
+sample_rate = 16000
+chunk_ms = 20                   # 640 bytes at 16 kHz
 # Experimental: AT+CHLD=2 while the bridge starts (paired with AT+CHLD=0).
 hold_before_bridge = false
 

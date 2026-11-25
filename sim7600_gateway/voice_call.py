@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 from .audio_bridge import audio_devices, frame_bytes
 from .config import AudioBridgeConfig
 from .log import get_logger
+from .pcm_serial import PcmClosed, SerialPcm, route_port
 
 log = get_logger("audio.call")
 
@@ -88,6 +89,7 @@ class CallVoiceSession:
         self._active = False
         self._arec: asyncio.subprocess.Process | None = None
         self._aplay: asyncio.subprocess.Process | None = None
+        self._serial: SerialPcm | None = None
         self._tasks: list[asyncio.Task] = []
 
         self._playing = False
@@ -126,6 +128,7 @@ class CallVoiceSession:
             "speaking": self._speaking,
             "awaiting_reply": self._awaiting_reply,
             "sample_rate": self.config.sample_rate,
+            "transport": "serial" if self._serial is not None else "alsa",
             "frames_in": self._frames_in,
             "frames_out": self._frames_out,
             "last_error": self._last_error,
@@ -141,6 +144,30 @@ class CallVoiceSession:
             self._last_error = error
             log.warning("голосовой цикл недоступен: %s", error)
             return False
+
+        serial_port = route_port(capture)
+        if serial_port:
+            self._serial = SerialPcm(serial_port, self.config.pcm_baudrate)
+            try:
+                await self._serial.open()
+            except Exception as exc:
+                self._last_error = str(exc)
+                log.error("не удалось открыть PCM-порт %s: %s", serial_port, exc)
+                self._serial = None
+                return False
+            self._activate()
+            self._capture_ready.set()
+            self._tasks = [
+                asyncio.create_task(self._capture_loop(), name="call-capture-serial"),
+            ]
+            log.info(
+                "голосовой цикл звонка запущен (PCM %s, %s Гц, кадр %s байт)",
+                serial_port,
+                self.config.sample_rate,
+                self._frame_bytes,
+            )
+            return True
+
         assert capture is not None and playback is not None
         rate = str(self.config.sample_rate)
         try:
@@ -182,15 +209,7 @@ class CallVoiceSession:
             await self.stop()
             return False
 
-        self._active = True
-        self._listening = True
-        self._follow_up = False
-        self._speaking = False
-        self._awaiting_reply = False
-        self._interrupted = False
-        self._reply = None
-        self._pre_roll.clear()
-        self._capture_ready.clear()
+        self._activate()
         self._tasks = [
             asyncio.create_task(self._capture_loop(), name="call-capture"),
             asyncio.create_task(self._stderr_loop(self._arec, "arecord"), name="call-arec-err"),
@@ -219,7 +238,20 @@ class CallVoiceSession:
         )
         return True
 
+    def _activate(self) -> None:
+        self._active = True
+        self._listening = True
+        self._follow_up = False
+        self._speaking = False
+        self._awaiting_reply = False
+        self._interrupted = False
+        self._reply = None
+        self._pre_roll.clear()
+        self._capture_ready.clear()
+
     def _processes_alive(self) -> bool:
+        if self._serial is not None:
+            return self._serial.is_open
         for process in (self._arec, self._aplay):
             if process is None or process.returncode is not None:
                 return False
@@ -255,6 +287,10 @@ class CallVoiceSession:
                     await asyncio.wait_for(process.wait(), timeout=2)
         self._arec = None
         self._aplay = None
+        serial, self._serial = self._serial, None
+        if serial is not None:
+            with contextlib.suppress(Exception):
+                await serial.close()
 
     # ── core frames ──────────────────────────────────────────────────────────
 
@@ -377,6 +413,9 @@ class CallVoiceSession:
     # ── capture + VAD ────────────────────────────────────────────────────────
 
     async def _capture_loop(self) -> None:
+        if self._serial is not None:
+            await self._capture_loop_serial()
+            return
         assert self._arec is not None and self._arec.stdout is not None
         stream = self._arec.stdout
         try:
@@ -398,6 +437,30 @@ class CallVoiceSession:
                 self._listening = False
                 log.warning("arecord в звонке завершился")
                 self._notify_stopped("arecord завершился")
+
+    async def _capture_loop_serial(self) -> None:
+        assert self._serial is not None
+        try:
+            while self._active:
+                try:
+                    frame = await self._serial.read_frame(self._frame_bytes)
+                except PcmClosed:
+                    break
+                except asyncio.CancelledError:
+                    raise
+                self._capture_ready.set()
+                await self._process_frame(frame)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - USB/serial errors
+            self._last_error = str(exc)
+            log.warning("захват речи из PCM-порта остановился: %s", exc)
+        finally:
+            if self._active:
+                self._active = False
+                self._listening = False
+                log.warning("PCM-порт завершил захват речи")
+                self._notify_stopped("PCM-порт завершился")
 
     async def _process_frame(self, frame: bytes) -> None:
         if self._playing:
@@ -581,8 +644,10 @@ class CallVoiceSession:
         await self._emit({"type": "playback.stopped", "reason": reason})
 
     async def _play_pcm(self, pcm: bytes, rate: int, duration: float | None = None) -> str:
-        """Write PCM to aplay at realtime pace; returns a playback reason."""
-        if not pcm or self._aplay is None or self._aplay.stdin is None:
+        """Write PCM to the PCM port/aplay at realtime pace; returns a reason."""
+        if not pcm:
+            return "error"
+        if self._serial is None and (self._aplay is None or self._aplay.stdin is None):
             return "error"
         target = self.config.sample_rate
         if rate and rate != target:
@@ -600,9 +665,13 @@ class CallVoiceSession:
             chunk = pcm[offset : offset + self._frame_bytes]
             offset += len(chunk)
             try:
-                self._aplay.stdin.write(chunk)
-                await self._aplay.stdin.drain()
-            except (ConnectionResetError, BrokenPipeError):
+                if self._serial is not None:
+                    await self._serial.write(chunk)
+                else:
+                    assert self._aplay is not None and self._aplay.stdin is not None
+                    self._aplay.stdin.write(chunk)
+                    await self._aplay.stdin.drain()
+            except (ConnectionResetError, BrokenPipeError, PcmClosed):
                 return "error"
             self._frames_out += 1
             await asyncio.sleep(self._frame_seconds)

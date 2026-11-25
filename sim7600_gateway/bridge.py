@@ -284,7 +284,7 @@ class GatewayBridge:
         if self.audio.active or self.voice.active:
             return True
         if self.config.modem.mock:
-            # The simulator has no ALSA devices; the protocol path is testable.
+            # The simulator has no ALSA/PCM devices; the protocol path is testable.
             return True
         ok, _capture, _playback, error = await audio_devices(self.config.audio_bridge)
         self._audio_error = error
@@ -421,16 +421,16 @@ class GatewayBridge:
                         await self._bridge_failed(str(bridged.get("error") or "call.bridge failed"))
                         if self.modem.snapshot.call_active:
                             return {
-                                "status": "delivered",
+                                "status": "done",
                                 "mode": "assistant",
                                 "warning": bridged.get("error"),
                             }
                         return {"status": "failed", "error": bridged.get("error")}
-                    return {"status": "delivered", "mode": "bridge"}
+                    return {"status": "done", "mode": "bridge"}
                 if not await self._start_voice_call():
                     return {
                         "status": "failed",
-                        "error": "voice audio is unavailable (audio_bridge.enabled/ALSA)",
+                        "error": "voice audio is unavailable (serial PCM port / ALSA / audio_bridge.enabled)",
                     }
                 self._bridge_pending = False
                 self._cancel_bridge_timeout()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import re
 import shutil
 import subprocess
@@ -17,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from .config import AudioBridgeConfig
 from .log import get_logger
 from .modem.sim7600 import Sim7600
+from .pcm_serial import PcmClosed, SerialPcm, route_port, serial_route
 
 log = get_logger("audio.bridge")
 
@@ -86,16 +88,38 @@ async def resolve_alsa_device_async(value: str, keyword: str = "SIM7600") -> str
 async def audio_devices(
     config: AudioBridgeConfig,
 ) -> tuple[bool, str | None, str | None, str | None]:
-    """Validate ALSA availability before a call is answered.
+    """Validate an audio route before a call is answered.
 
-    Returns ``(ok, capture, playback, error)``. The check itself does not
-    open the devices; it only verifies binaries and card resolution so the
-    gateway can refuse to answer a call it cannot serve.
+    Returns ``(ok, capture, playback, error)``. A configured serial PCM port
+    wins over ALSA and is reported as ``serial:<port>`` in both capture and
+    playback. The check does not open the port; callers do that and report
+    failures precisely.
     """
     if not config.enabled:
         return False, None, None, "audio_bridge.enabled = false"
+
+    transport = (config.audio_transport or "auto").lower()
+    port = (config.pcm_port or "").strip()
+    if transport in ("auto", "serial"):
+        if port and port.lower() not in ("", "off", "none", "false", "auto"):
+            if await asyncio.to_thread(os.path.exists, port):
+                route = serial_route(port)
+                return True, route, route, None
+            if transport == "serial":
+                return (
+                    False,
+                    None,
+                    None,
+                    f"serial PCM port not found: {port} (set audio_bridge.pcm_port)",
+                )
+
     if not shutil.which("arecord") or not shutil.which("aplay"):
-        return False, None, None, "arecord/aplay not installed (alsa-utils)"
+        return (
+            False,
+            None,
+            None,
+            "serial PCM port not found and arecord/aplay not installed (alsa-utils)",
+        )
     try:
         capture, playback = await asyncio.gather(
             resolve_alsa_device_async(config.capture_device),
@@ -108,7 +132,8 @@ async def audio_devices(
             False,
             capture,
             playback,
-            "SIM7600 ALSA card not found (set capture_device/playback_device)",
+            "serial PCM port not found and SIM7600 ALSA card not found "
+            "(set audio_bridge.pcm_port or capture_device/playback_device)",
         )
     return True, capture, playback, None
 
@@ -133,6 +158,7 @@ class AudioBridge:
         self._on_stopped = on_stopped
         self._capture: asyncio.subprocess.Process | None = None
         self._playback: asyncio.subprocess.Process | None = None
+        self._serial: SerialPcm | None = None
         self._tasks: list[asyncio.Task] = []
         self._write_lock = asyncio.Lock()
         self._active = False
@@ -157,6 +183,7 @@ class AudioBridge:
             "frames_out": self._frames_out,
             "capture_device": self._capture_device or self.config.capture_device,
             "playback_device": self._playback_device or self.config.playback_device,
+            "transport": "serial" if self._serial is not None else "alsa",
             "sample_rate": self.config.sample_rate,
             "chunk_ms": self.config.chunk_ms,
             "last_error": self._last_error,
@@ -177,6 +204,31 @@ class AudioBridge:
             return True
         if not await self.prepare():
             return False
+        serial_port = route_port(self._capture_device)
+        if serial_port:
+            self._serial = SerialPcm(serial_port, self.config.pcm_baudrate)
+            try:
+                await self._serial.open()
+            except Exception as exc:
+                self._last_error = str(exc)
+                log.error("не удалось открыть PCM-порт моста %s: %s", serial_port, exc)
+                self._serial = None
+                return False
+            if not await self._modem.enable_pcm_audio():
+                self._last_error = "AT+CPCMREG=1 failed"
+                log.error("аудиомост: модем не включил PCM-маршрут")
+                await self.stop()
+                return False
+            self._pcm_enabled = True
+            if self.config.hold_before_bridge:
+                self._held = await self._modem.hold_call()
+            self._active = True
+            self._tasks = [
+                asyncio.create_task(self._capture_loop(), name="audio-capture"),
+            ]
+            log.info("аудиомост запущен (PCM %s, %s Гц)", serial_port, self.config.sample_rate)
+            return True
+
         assert self._capture_device is not None and self._playback_device is not None
         rate = str(self.config.sample_rate)
         capture_cmd = [
@@ -261,10 +313,26 @@ class AudioBridge:
         return True
 
     async def _capture_loop(self) -> None:
+        size = frame_bytes(self.config)
+        if self._serial is not None:
+            try:
+                while self._active:
+                    try:
+                        frame = await self._serial.read_frame(size)
+                    except PcmClosed:
+                        break
+                    except asyncio.CancelledError:
+                        raise
+                    self._frames_in += 1
+                    await self._deliver_capture(frame)
+            finally:
+                if self._active:
+                    self._active = False
+                    self._notify_stopped("PCM-порт завершился")
+            return
         process = self._capture
         if process is None or process.stdout is None:
             return
-        size = frame_bytes(self.config)
         try:
             while self._active:
                 try:
@@ -274,17 +342,21 @@ class AudioBridge:
                 except asyncio.CancelledError:
                     raise
                 self._frames_in += 1
-                if self._on_capture is not None:
-                    try:
-                        result = self._on_capture(frame)
-                        if asyncio.iscoroutine(result):
-                            await result
-                    except Exception as exc:
-                        log.debug("отправка PCM не удалась: %s", exc)
+                await self._deliver_capture(frame)
         finally:
             if self._active:
                 self._active = False
                 self._notify_stopped("arecord завершился")
+
+    async def _deliver_capture(self, frame: bytes) -> None:
+        if self._on_capture is None:
+            return
+        try:
+            result = self._on_capture(frame)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            log.debug("отправка PCM не удалась: %s", exc)
 
     async def _stderr_loop(self, process: asyncio.subprocess.Process | None, name: str) -> None:
         if process is None or process.stderr is None:
@@ -300,8 +372,21 @@ class AudioBridge:
 
     async def feed(self, pcm: bytes) -> None:
         """PCM from Athena Core → GSM line."""
+        if not self._active:
+            return
+        if self._serial is not None:
+            async with self._write_lock:
+                try:
+                    await self._serial.write(pcm)
+                    self._frames_out += 1
+                except (PcmClosed, OSError) as exc:
+                    self._last_error = str(exc)
+                    log.warning("воспроизведение PCM остановилось: %s", exc)
+                    self._active = False
+                    self._notify_stopped("PCM-порт завершился")
+            return
         process = self._playback
-        if not self._active or process is None or process.stdin is None:
+        if process is None or process.stdin is None:
             return
         async with self._write_lock:
             try:
@@ -331,6 +416,10 @@ class AudioBridge:
                     await asyncio.wait_for(process.wait(), timeout=2)
         self._capture = None
         self._playback = None
+        serial, self._serial = self._serial, None
+        if serial is not None:
+            with contextlib.suppress(Exception):
+                await serial.close()
         if self._held:
             self._held = False
             with contextlib.suppress(Exception):

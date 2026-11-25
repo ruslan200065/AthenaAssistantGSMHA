@@ -12,14 +12,14 @@
 ### `GET /api/health` (без токена)
 
 ```json
-{"status":"ok","version":"1.2.1","uptime_sec":120,"mock":false}
+{"status":"ok","version":"1.2.2","uptime_sec":120,"mock":false}
 ```
 
 ### `GET /api/status`
 
 ```json
 {
-  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.2.1","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
+  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.2.2","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
   "modem": {
     "state":"idle","online":true,"sim_ready":true,"sim_state":"READY",
     "registered":true,"registration_status":1,"registration_text":"registered_home",
@@ -98,7 +98,8 @@
 запускается только командой ядра `call {action:"answer", mode:"assistant"}` или
 `mode:"bridge"` (см. [CALL_VOICE.md](CALL_VOICE.md)).
 
-`/api/calls/bridge` требует доступного аудио (`[audio_bridge].enabled` + ALSA,
+`/api/calls/bridge` требует доступного аудио (`[audio_bridge].enabled` +
+serial PCM-порт `pcm_port` или ALSA,
 либо mock) и подключённой Athena. Отвечает на звонок, если он ещё ringing, и
 отправляет `call.bridge`; при недоступности аудио/ядра — 503. Ответ
 `{"ok": true, "room": "...", "target_endpoint_id": ...}` означает, что кадр

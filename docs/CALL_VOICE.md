@@ -17,10 +17,10 @@ aplay ──► SIM7600 ──GSM──► Абонент
 ## Условия
 
 - `[audio_bridge].enabled = true`;
-- ALSA-устройства модема доступны (`arecord -l`, `aplay -l`), либо включён
-  `modem.mock`/`camera.mock` для отладки;
-- `capture_device`/`playback_device` = `"auto"` (шлюз сам ищет карту с
-  `SIM7600`) или явные `plughw:N,M`;
+- сырой PCM-порт модема `/dev/ttyUSB4` (опция `pcm_port`, в HA add-on —
+  `pcm_port`), либо ALSA-устройства (`arecord -l`, `aplay -l`) как fallback;
+- `modem.mock` для отладки без железа;
+- `audio_transport = "auto"` сначала пробует serial PCM, затем ALSA;
 - исходящий вызов должен быть принят **командой ядра** `call {action:"answer"}`.
   Локальный REST `POST /api/calls/answer` делает только `ATA` и не запускает
   голосовой цикл — в трубке будет тишина.
@@ -195,6 +195,9 @@ port = "/dev/ttyUSB2"
 
 [audio_bridge]
 enabled = true
+pcm_port = "/dev/ttyUSB4"
+pcm_baudrate = 115200
+audio_transport = "auto"
 capture_device = "auto"
 playback_device = "auto"
 sample_rate = 16000
@@ -202,7 +205,8 @@ chunk_ms = 20
 hold_before_bridge = false
 ```
 
-В HA add-on те же поля задаются опциями `audio_enabled`, `audio_device`.
+В HA add-on те же поля задаются опциями `audio_enabled`, `pcm_port`
+(обычно `/dev/ttyUSB4`) и `audio_device` (ALSA fallback).
 
 ## 8. Диагностика
 

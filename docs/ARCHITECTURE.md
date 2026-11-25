@@ -93,7 +93,7 @@ sequenceDiagram
 
 Если bridge не запрошен, после `ATA` запускается `CallVoiceSession` — голосовой
 диалог с абонентом (assistant voice). При `mode="bridge"` шлюз сначала проверяет
-доступность аудио (`[audio_bridge].enabled` + ALSA/mock), затем отвечает и шлёт
+доступность аудио (`[audio_bridge].enabled` + serial PCM/ALSA/mock), затем отвечает и шлёт
 `call.bridge`. Если bridge не удался, а звонок ещё активен, происходит fallback на
 assistant voice; если звонок уже сброшен — шлюз завершает его.
 

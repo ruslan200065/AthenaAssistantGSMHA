@@ -143,9 +143,10 @@ room_hint = "Прихожая"
 3. Установите **Athena SIM7600 Gateway** и откройте «Настройки»:
    - `api_token` — придумайте токен для интеграции HA;
    - `modem_port` — `/dev/ttyUSB2` (проверьте `ls /dev/ttyUSB*` на хосте);
+   - `pcm_port` — `/dev/ttyUSB4` (сырой PCM-порт модема для голоса);
    - `camera_device` — `/dev/video0`;
    - `audio_enabled` — голосовой цикл звонка (разговор с Афиной);
-   - `audio_device` — `auto` или `plughw:1,0` (USB-аудио SIM7600);
+   - `audio_device` — `auto` или `plughw:1,0` (ALSA fallback, если нет PCM-порта);
    - `athena_url` / `athena_token` — ядро Athena, если используете;
    - `modem_mock` / `camera_mock` — включите, чтобы проверить без железа.
 4. Запустите приложение и проверьте `http://<HA-хост>:8099/api/health`.
@@ -265,7 +266,7 @@ cd AthenaAssistantGSMHA
 python -m pytest -q
 ```
 
-53 теста: PDU-кодек (эталонные векторы, UCS-2, склейка), AT-канал, симулятор
+60 тестов: PDU-кодек (эталонные векторы, UCS-2, склейка), AT-канал, симулятор
 модема, WebSocket-клиент ядра против локального сервера, REST API, конфиг, камера,
 голосовой диалог (`test_voice_call.py`), полный сценарий bridge с фейковым ядром.
 

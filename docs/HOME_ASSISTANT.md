@@ -8,9 +8,12 @@
 2. Добавьте `https://github.com/ruslan200065/AthenaAssistantGSMHA`.
 3. Установите «Athena SIM7600 Gateway» и откройте вкладку «Настройки»:
    `athena_url`, `athena_token`, `api_token`, `modem_port`, `camera_device`,
-   `audio_device`. Запустите дополнение — панель шлюза откроется через ingress.
-4. API-токен также сохраняется в `/data/api_token.txt`; используйте его для
-   HACS-интеграции по адресу `http://<HA-IP>:8099`.
+   `pcm_port` (обычно `/dev/ttyUSB4`), `audio_device` (обычно `auto`).
+4. Запустите дополнение и откройте панель через ingress (порт 8099).
+   API-токен также сохраняется в `/data/api_token.txt`.
+
+Для HACS-интеграции укажите URL шлюза `http://<HA-IP>:8099` (host network) и этот
+же API-токен.
 
 ### Вручную
 
@@ -107,11 +110,14 @@ data:
 service: athena_sim7600.reset_modem
 ```
 
-`answer_call` выполняет только `ATA` — абонент слышит тишину. Голосовой ответ
-инициирует Athena командой `call {action:"answer", mode:"assistant"|"bridge"}`;
-для него нужны `[audio_bridge].enabled = true` и ALSA/USB-аудио (или mock).
-`bridge_call` также требует аудио и подключённую Athena, отвечает на звонок и
-возвращает 503, если аудио или ядро недоступны.
+`answer_call` — это «сырой» `ATA`: он поднимает трубку, но не запускает голосовой
+диалог, поэтому в трубке будет тишина. Голосовой ответ инициирует Athena командой
+`call {action:"answer", mode:"assistant"|"bridge"}`; для него нужны
+`[audio_bridge].enabled=true` и serial PCM (`pcm_port`) или ALSA/mock-аудио.
+
+`bridge_call` также требует доступное аудио и подключённую Athena: сервис отвечает
+на входящий звонок (если он ещё ringing) и отправляет `call.bridge`. Без аудио или
+без Athena вернётся 503.
 
 ## События шины
 
@@ -123,9 +129,9 @@ service: athena_sim7600.reset_modem
 | `athena_sim7600_call_state` | `{state, number, duration_sec}` |
 | `athena_sim7600_motion` | `{changed, threshold, at}` |
 
-`athena_sim7600_event` может содержать `bridge.error`, `core.error`,
-`intercom.frame`. Голосовые кадры (`audio.start`, PCM, `audio.url`,
-`conversation.end`) идут по WebSocket Athena, а не в шину HA.
+`athena_sim7600_event` может также содержать `bridge.error`, `core.error` и
+`intercom.frame`. Голосовые кадры (`audio.start`, бинарный PCM, `audio.url`,
+`conversation.end`) идут по WebSocket Athena и в шину HA не попадают.
 
 Пример автоматизации на SMS:
 

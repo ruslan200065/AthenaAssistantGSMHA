@@ -486,25 +486,39 @@ class Sim7600:
         return last
 
     async def enable_pcm_audio(self) -> bool:
-        """Route call audio to the USB interface (16 kHz) for voice/bridge."""
+        """Route call audio to the USB interface (16 kHz) for voice/bridge.
+
+        Sequence matches the working SIM7600 reference: reset the route,
+        select 16-bit linear PCM at 16 kHz, then enable it with one retry.
+        """
         channel = self._channel
         if channel is None or not channel.connected:
             return False
-        # CPCMFRM selects 16-bit linear PCM at 16 kHz. Some firmware revisions
-        # do not know it; the CPCMREG result is authoritative.
+        with contextlib.suppress(Exception):
+            await channel.command("AT+CPCMREG=0,1", timeout=5)
         with contextlib.suppress(Exception):
             result = await channel.command("AT+CPCMFRM=1", timeout=5)
             if not result.ok:
                 log.debug("AT+CPCMFRM=1 → %s (продолжаю)", result.error)
-        try:
-            result = await channel.command("AT+CPCMREG=1", timeout=5)
-        except ModemNotConnected:
-            return False
-        if not result.ok:
-            log.warning("AT+CPCMREG=1 → %s", result.error)
+        result = None
+        for attempt in range(2):
+            try:
+                result = await channel.command("AT+CPCMREG=1", timeout=5)
+            except ModemNotConnected:
+                return False
+            if result.ok:
+                break
+            if attempt == 0:
+                log.debug("AT+CPCMREG=1 → %s, повтор", result.error)
+                await asyncio.sleep(0.2)
+        if result is None or not result.ok:
+            log.warning("AT+CPCMREG=1 → %s", result.error if result else "no response")
             return False
         with contextlib.suppress(Exception):
-            await channel.command("AT+CPCMFRM?", timeout=5)
+            check = await channel.command("AT+CPCMFRM?", timeout=5)
+            line = check.first("+CPCMFRM:") if check.ok else None
+            if line and "1" not in line.split(":", 1)[-1]:
+                log.warning("AT+CPCMFRM? → %s (ожидался 16 kHz)", line)
         return True
 
     async def disable_pcm_audio(self) -> bool:
