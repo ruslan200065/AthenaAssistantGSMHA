@@ -51,7 +51,7 @@
 ## Быстрый старт без железа
 
 ```bash
-cd sim7600-gateway
+cd AthenaAssistantGSMHA
 python -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
@@ -244,7 +244,7 @@ action:
 | POST | `/api/ussd` | `{code}` → ответ сети |
 | POST | `/api/dial` | `{number}` |
 | POST | `/api/calls/answer` / `hangup` / `dtmf` | управление звонком |
-| POST | `/api/calls/bridge` | `{room}` → `call.bridge` в ядро |
+| POST | `/api/calls/bridge` | `{room}` → ответить и отправить `call.bridge` (нужны аудио и Athena) |
 | GET | `/api/camera/snapshot.jpg` | JPEG-кадр |
 | GET | `/api/camera/stream.mjpg` | MJPEG-поток |
 | GET | `/api/events` | SSE-поток событий |
@@ -252,19 +252,22 @@ action:
 | POST | `/api/modem/reset` | Перезапуск модуля |
 
 Авторизация: `Authorization: Bearer <bridge.api_token>` или `X-Api-Token`.
-Для `<img>`/`EventSource` допускается `?token=...`. Камеру можно открыть без
-токена флагом `bridge.allow_anonymous_camera = true`.
+`?token=...` принимается только для `/api/events*` и `/api/camera/*` (нужно для
+`<img>`/`EventSource`). Камеру можно открыть без токена флагом
+`bridge.allow_anonymous_camera = true`. `POST /api/calls/answer` делает только
+`ATA` (абонент слышит тишину); голосовой ответ запускает Athena командой
+`call {action:"answer", mode:"assistant"|"bridge"}`.
 
 ## Тесты
 
 ```bash
-cd sim7600-gateway
+cd AthenaAssistantGSMHA
 python -m pytest -q
 ```
 
-47 тестов: PDU-кодек (эталонные векторы, UCS-2, склейка), AT-канал, симулятор
+53 теста: PDU-кодек (эталонные векторы, UCS-2, склейка), AT-канал, симулятор
 модема, WebSocket-клиент ядра против локального сервера, REST API, конфиг, камера,
-полный сценарий bridge с фейковым ядром.
+голосовой диалог (`test_voice_call.py`), полный сценарий bridge с фейковым ядром.
 
 ## Структура
 
@@ -276,7 +279,8 @@ AthenaAssistantGSMHA/
 │   ├── camera/          # ffmpeg/V4L2, MJPEG, движение
 │   ├── app.py           # FastAPI + SSE
 │   ├── bridge.py        # оркестрация и политики
-│   ├── audio_bridge.py  # PCM-мост (опционально)
+│   ├── voice_call.py    # голосовой диалог с абонентом (VAD/PCM/audio.url)
+│   ├── audio_bridge.py  # PCM-мост intercom (bridge mode)
 │   └── dashboard.py     # локальный UI
 ├── custom_components/athena_sim7600/
 ├── deploy/              # systemd, Docker, udev
@@ -288,8 +292,8 @@ AthenaAssistantGSMHA/
 
 - В логи не попадают полные номера и тексты SMS (маскирование).
 - API защищён Bearer-токеном; камера по умолчанию тоже.
-- Нет записи разговоров. Аудиомост передаёт PCM только в рамках активной
-  intercom-сессии Athena.
+- Нет записи разговоров. PCM передаётся только во время активного звонка
+  (голосовой диалог с Athena) или активной intercom-сессии.
 - Рекомендуется держать шлюз в домашней сети/VPN и не публиковать порт 8099 наружу.
 
 ## Документация

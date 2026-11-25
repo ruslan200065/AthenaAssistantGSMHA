@@ -2,10 +2,20 @@
 
 ## Установка
 
+### HA app (add-on, рекомендуется)
+
+1. «Настройки → Дополнения → Магазин дополнений» → ⋮ → «Репозитории».
+2. Добавьте `https://github.com/ruslan200065/AthenaAssistantGSMHA`.
+3. Установите «Athena SIM7600 Gateway» и откройте вкладку «Настройки»:
+   `athena_url`, `athena_token`, `api_token`, `modem_port`, `camera_device`,
+   `audio_device`. Запустите дополнение — панель шлюза откроется через ingress.
+4. API-токен также сохраняется в `/data/api_token.txt`; используйте его для
+   HACS-интеграции по адресу `http://<HA-IP>:8099`.
+
 ### Вручную
 
 ```bash
-cp -r sim7600-gateway/ha/custom_components/athena_sim7600 /config/custom_components/
+cp -r custom_components/athena_sim7600 /config/custom_components/
 ```
 
 Перезапустите Home Assistant.
@@ -13,9 +23,7 @@ cp -r sim7600-gateway/ha/custom_components/athena_sim7600 /config/custom_compone
 ### HACS (custom repository)
 
 1. HACS → «Интеграции» → ⋮ → «Пользовательские репозитории».
-2. URL: репозиторий, где `custom_components/athena_sim7600` лежит в корне.
-   В этом монорепозитории интеграция находится в `ha/`, поэтому проще указать
-   `ha/` как отдельный репозиторий либо установить вручную.
+2. URL: этот репозиторий — `custom_components/athena_sim7600` лежит в корне.
 3. Категория «Integration» → установить → перезапустить HA.
 
 ### Настройка
@@ -99,6 +107,12 @@ data:
 service: athena_sim7600.reset_modem
 ```
 
+`answer_call` выполняет только `ATA` — абонент слышит тишину. Голосовой ответ
+инициирует Athena командой `call {action:"answer", mode:"assistant"|"bridge"}`;
+для него нужны `[audio_bridge].enabled = true` и ALSA/USB-аудио (или mock).
+`bridge_call` также требует аудио и подключённую Athena, отвечает на звонок и
+возвращает 503, если аудио или ядро недоступны.
+
 ## События шины
 
 | Событие | Данные |
@@ -108,6 +122,10 @@ service: athena_sim7600.reset_modem
 | `athena_sim7600_incoming_call` | `{number, at}` |
 | `athena_sim7600_call_state` | `{state, number, duration_sec}` |
 | `athena_sim7600_motion` | `{changed, threshold, at}` |
+
+`athena_sim7600_event` может содержать `bridge.error`, `core.error`,
+`intercom.frame`. Голосовые кадры (`audio.start`, PCM, `audio.url`,
+`conversation.end`) идут по WebSocket Athena, а не в шину HA.
 
 Пример автоматизации на SMS:
 

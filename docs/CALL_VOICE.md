@@ -1,143 +1,238 @@
 # Голосовой звонок: «позвонить Афине»
 
-Шлюз работает как обычное голосовое устройство Athena без wake-слова: человек
-звонит на SIM-номер, ядро поднимает трубку (`mode: "assistant"`), и дальше идёт
-обычный цикл `audio.start → PCM → audio.end → assistant.reply → audio.url`.
+Шлюз умеет не просто поднимать трубку, а отдавать звонок ядру Athena как
+голосовому устройству: абонент говорит, ядро отвечает, ответ проигрывается в
+трубку. Wake word не нужен — для endpoint `kind="gsm"` каждое принятое
+обращение считается отдельной репликой диалога.
 
-## Что делает шлюз
+```
+Абонент ──GSM──► SIM7600 ──USB audio──► arecord ──VAD──► audio.start + PCM
+                                                            │
+Athena Core ◄───────────────────────────────────────────────┘
+      │ assistant.reply + audio.url
+      ▼
+aplay ──► SIM7600 ──GSM──► Абонент
+```
 
-### 1. Ответ на звонок
+## Условия
 
-Команда ядра:
+- `[audio_bridge].enabled = true`;
+- ALSA-устройства модема доступны (`arecord -l`, `aplay -l`), либо включён
+  `modem.mock`/`camera.mock` для отладки;
+- `capture_device`/`playback_device` = `"auto"` (шлюз сам ищет карту с
+  `SIM7600`) или явные `plughw:N,M`;
+- исходящий вызов должен быть принят **командой ядра** `call {action:"answer"}`.
+  Локальный REST `POST /api/calls/answer` делает только `ATA` и не запускает
+  голосовой цикл — в трубке будет тишина.
+
+## 1. Ответ на звонок
+
+Ядро присылает:
 
 ```json
-{"type":"command","kind":"call","payload":{
-  "call_id":42,"number":"+79991234567","action":"answer",
-  "mode":"assistant","bridge_room":null,"bridge_endpoint_id":null}}
+{
+  "type": "command",
+  "id": 42,
+  "kind": "call",
+  "payload": {
+    "call_id": 7,
+    "number": "+79991234567",
+    "action": "answer",
+    "mode": "assistant",
+    "bridge_room": null,
+    "bridge_endpoint_id": null
+  }
+}
 ```
 
 Шлюз:
 
-1. `ATA`;
-2. `command.ack {"status":"done"}`;
-3. `call.state {"state":"active","number":"..."}`;
-4. запускает голосовой цикл (если `[audio_bridge].enabled`).
+1. Проверяет доступность аудио. Если аудио нет — `command.ack` со статусом
+   `failed` и текстом `voice audio is unavailable (audio_bridge.enabled/ALSA)`,
+   звонок не поднимается.
+2. Запускает голосовую сессию (`CallVoiceSession`).
+3. Выполняет `ATA`, отправляет `call.state {"state":"active","number":"..."}`.
+4. Отвечает `command.ack {"status":"done"}`.
 
-В режиме `mode: "bridge"` вместо этого после `ATA` отправляется `call.bridge`
-с `bridge_room`/`bridge_endpoint_id`, а PCM идёт в intercom-сессию.
+`mode`:
 
-### 2. Слушаем абонента
+| mode | Поведение |
+|---|---|
+| `assistant` (по умолчанию) | Абонент говорит с Афиной; PCM идёт в ядро |
+| `bridge` | После `ATA` шлётся `call.bridge`; PCM идёт в intercom-сессию с колонкой |
 
-- `arecord` с USB-аудио SIM7600: **16 кГц, mono, s16le**, кадры по 640 байт
-  (20 мс).
-- Локальный VAD: адаптивный порог по шуму линии, pre-roll 300 мс, конец фразы
-  после ~700 мс тишины, максимум 20 с.
-- При начале речи:
+Если `bridge_room`/`bridge_endpoint_id` заданы, режим считается bridge даже при
+`mode:"assistant"`.
+
+### Ошибки и fallback
+
+- **Аудио недоступно до ответа** — ack `failed`, звонок не принимается.
+- **Bridge не удался, звонок ещё активен** — шлюз возвращает ack
+  `{"status":"done","mode":"assistant","warning":"..."}` и продолжает как
+  голосовой ассистент, чтобы абонент не попал в тишину.
+- **Bridge не удался и звонок уже завершён** — ack `failed`.
+- **`ATA` не удался** — голосовая сессия останавливается, ack `failed`.
+
+## 2. Слушаем абонента
+
+`CallVoiceSession` открывает `arecord` на 16 кГц, mono, `pcm_s16le`.
+Кадр — 640 байт (20 мс). Локальный VAD:
+
+- адаптивный порог по шуму;
+- pre-roll ~300 мс, чтобы не потерять начало фразы;
+- конец фразы после ~700 мс тишины;
+- максимальная фраза — 20 с.
+
+Перед отправкой речи:
 
 ```json
-{"type":"audio.start","utterance_id":"gsm-…","sample_rate":16000,
- "format":"pcm_s16le","follow_up":false}
+{
+  "type": "audio.start",
+  "utterance_id": "gsm-1750000000-1",
+  "sample_rate": 16000,
+  "format": "pcm_s16le",
+  "follow_up": false
+}
 ```
 
-- дальше бинарные PCM-кадры по 640 байт;
-- при паузе:
+Затем бинарные PCM-кадры по 640 байт и:
 
 ```json
-{"type":"audio.end","utterance_id":"gsm-…"}
+{"type": "audio.end", "utterance_id": "gsm-1750000000-1"}
 ```
 
-Ядро распознаёт речь, вызывает ассистента и присылает `assistant.reply` +
-`audio.url`. Wake-слово не используется: для `kind="gsm"` ядро принимает каждую
-фразу как реплику.
+Ядро принимает до 120 с / 25 МиБ на utterance. Для `kind="gsm"` wake word не
+проверяется.
 
-### 3. Отвечаем в трубку
+## 3. Ответ в трубку
 
-`assistant.reply` содержит `listen`, `end`, `follow_up_timeout_seconds`,
-`duration_hint`. Затем приходит:
+После обработки ядро присылает:
 
 ```json
-{"type":"audio.url","utterance_id":"gsm-…","url":"https://core/…/tts.ogg",
- "format":"audio/ogg","duration":4.2,"text":"…","can_interrupt":true}
+{
+  "type": "assistant.reply",
+  "text": "Привет! Чем помочь?",
+  "conversation_id": 12,
+  "listen": true,
+  "end": false,
+  "follow_up_timeout_seconds": 8,
+  "duration_hint": 3.4
+}
+```
+
+и `audio.url`:
+
+```json
+{
+  "type": "audio.url",
+  "utterance_id": "reply-12-1",
+  "url": "http://core:8000/media/reply.ogg",
+  "format": "audio/ogg",
+  "duration": 3.4,
+  "text": "Привет! Чем помочь?",
+  "can_interrupt": false
+}
 ```
 
 Шлюз:
 
-1. скачивает файл (до 25 МиБ, таймаут 20 с);
-2. декодирует `ffmpeg` в PCM 16 кГц mono;
-3. пишет в `aplay` в темпе реального времени, не дольше `duration`;
-4. на время проигрывания глушит микрофон (half-duplex, чтобы не услышать себя);
-5. отправляет `playback.stopped` с `reason` из контракта:
-   `"finished"` после нормального конца, `"interrupted"` при сбросе,
-   `"error"` при сбое.
+1. Скачивает файл (лимит 25 МиБ) или, если URL недоступен, запрашивает TTS:
+   `POST /api/device/tts` с `X-Device-Token` и телом `{"text": ...}`.
+2. Декодирует в PCM 16 кГц через ffmpeg (OGG/MP3/WAV).
+3. Проигрывает в `aplay` с реальным темпом, не дольше `duration` (если оно
+   задано), на время проигрывания микрофон приглушается.
+4. Отправляет `playback.stopped {reason}`.
 
-Если `audio.url` нет (TTS ядра недоступен), шлюз пробует
-`POST /api/device/tts` с `X-Device-Token` и играет полученный PCM.
+Если ядро не прислало ни `audio.url`, ни текст для TTS, сессия завершает
+диалог ошибкой `assistant.error`.
 
-### 4. Продолжение диалога
+## 4. Продолжение диалога
 
-Если в `assistant.reply` `listen: true` и `end: false`, после проигрывания шлюз
-снова открывает микрофон. Следующая фраза уходит с:
+Если в `assistant.reply` `end=false` и `listen=true`:
 
-```json
-{"type":"audio.start","utterance_id":"gsm-…","sample_rate":16000,
- "format":"pcm_s16le","follow_up":true}
-```
+- шлюз снова слушает и отправляет следующую фразу с
+  `audio.start {follow_up: true, ...}`;
+- таймаут ожидания следующей фразы — `follow_up_timeout_seconds` (минимум 3 с,
+  по умолчанию 8 с);
+- по таймауту или при `end=true` отправляется
+  `{"type":"conversation.end","reason":"timeout"|"ended"}`.
 
-Если тишина дольше `follow_up_timeout_seconds` (минимум 3 с), шлюз отправляет
-`conversation.end {"reason":"timeout"}`.
+Ответ ядра ожидается до 45 с; иначе — `assistant.error` и завершение диалога.
 
-Если `listen: false` / `end: true` — после ответа сразу
-`conversation.end {"reason":"ended"}`.
+## 5. Завершение звонка
 
-### 5. Завершение звонка
+При `ATH`/`NO CARRIER`/`VOICE CALL: END`:
 
-`NO CARRIER`, `VOICE CALL: END`, `MISSED_CALL` или watchdog `AT+CLCC` →
-`call.state ended/missed`; голосовой цикл и ALSA-процессы останавливаются.
+- голосовая сессия останавливается, микрофон и динамик закрываются;
+- в ядро уходит `call.state {"state":"ended","number":"...","duration_sec":N}`;
+- при активном bridge — `intercom.end {session_id, reason:"hangup"}`.
 
-## Настройка ALSA
+Если этого не сделать, звонок в ядре останется `active` и заблокирует следующие
+вызовы.
 
-В конфиге:
+## 6. Режим bridge (телефон ↔ колонка)
+
+1. Ядро присылает `call {action:"answer", mode:"bridge", bridge_room:"Кухня"}`
+   (или `bridge_endpoint_id`).
+2. Шлюз проверяет аудио, отвечает `ATA`.
+3. Отправляет `call.bridge {room|target_endpoint_id, call_number}`.
+4. Ядро создаёт intercom-сессию, шлёт `intercom.ringing` (с `session_id`),
+   колонка отвечает → обоим `intercom.active`.
+5. Шлюз подтверждает `event.ack` для `call.bridge`; при отсутствии ответа
+   срабатывает таймаут подтверждения.
+6. PCM 16 кГц / 640 байт идёт между GSM-линией и intercom.
+7. По завершении — `intercom.end`.
+
+Отказ колонки/ошибка bridge не должны оставлять абонента в тишине: шлюз
+переключается на голосового ассистента (если звонок ещё активен) либо кладёт
+трубку.
+
+## 7. Конфигурация
 
 ```toml
+[modem]
+port = "/dev/ttyUSB2"
+
 [audio_bridge]
 enabled = true
-capture_device = "auto"     # или "plughw:1,0"
+capture_device = "auto"
 playback_device = "auto"
 sample_rate = 16000
 chunk_ms = 20
-hold_before_bridge = true
+hold_before_bridge = false
 ```
 
-`auto` ищет карту с `SIM7600` в `arecord -l`. Проверка на хосте:
+В HA add-on те же поля задаются опциями `audio_enabled`, `audio_device`.
 
-```bash
-arecord -l
-aplay -l
-# тест записи/воспроизведения
-arecord -D plughw:1,0 -f S16_LE -r 16000 -c 1 -d 3 /tmp/test.wav
-aplay -D plughw:1,0 /tmp/test.wav
-```
+## 8. Диагностика
 
-Если модем отдаёт 8 кГц, оставьте `sample_rate = 16000` только при поддержке
-картой; иначе укажите фактическую частоту (ядро принимает `sample_rate` из
-`audio.start`, но не ресемплирует). Для SIM7600 обычно доступны 8/16/48 кГц.
-
-## Ограничения v1
-
-- Half-duplex: во время ответа микрофон закрыт, barge-in не поддерживается.
-- Нет AEC: эхо подавляется паузой записи и echo-window ядра.
-- PCM вниз (`audio.start` от ядра) не используется — ядро v1 присылает
-  `audio.url`.
-- Аудиомост `mode: "bridge"` и голосовой цикл взаимоисключающие.
-
-## Диагностика
-
-`GET /api/status` → `voice_call`:
+`GET /api/status → voice_call`:
 
 ```json
-{"active":true,"playing":false,"listening":true,"speaking":false,
- "frames_in":120,"frames_out":340,"last_error":null}
+{
+  "active": true,
+  "playing": false,
+  "listening": true,
+  "speaking": false,
+  "frames_in": 390,
+  "frames_out": 172,
+  "last_error": null,
+  "sample_rate": 16000
+}
 ```
 
-Логи: `audio.call` (VAD, audio.start/end, воспроизведение) и `bridge`
-(команда `call` с mode).
+`GET /api/diagnostics` дополнительно отдаёт AT-журнал и состояние модема.
+Типичные проблемы:
+
+- «тишина в трубке» — `audio_bridge.enabled=false`, неверное ALSA-устройство или
+  звонок поднят через REST, а не командой ядра;
+- эхо/обрывы — проверьте `alsamixer`, уровни capture/playback, `AT+CPCMREG=1`;
+- речь не распознаётся — VAD не слышит абонента: проверьте `arecord -D ... -f
+  S16_LE -r 16000 -c 1 -t raw | aplay`, затем `frames_in` в статусе.
+
+## 9. Связанные документы
+
+- [Протокол Athena](ATHENA_PROTOCOL.md) — кадры `audio.*`, `assistant.reply`,
+  `call.bridge`, `intercom.*`.
+- [API](API.md) — REST-эндпоинты и ограничения.
+- [Диагностика](TROUBLESHOOTING.md) — ALSA и модем.

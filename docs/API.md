@@ -1,23 +1,25 @@
 # REST API шлюза
 
 База: `http://<host>:8099`. Авторизация: `Authorization: Bearer <bridge.api_token>`
-или `X-Api-Token: <token>`. Для потоковых GET допускается `?token=...`.
+или `X-Api-Token: <token>`. Токен в query (`?token=...`) принимается только для
+`/api/events*` и `/api/camera/*` — этого достаточно для `EventSource` и `<img>`.
 
-Ошибки: `{"detail": "..."}` с кодом 400/401/403/404/503.
+Ошибки: `{"detail": "..."}` с кодом 401/403/404/422/503. Pydantic-валидация
+тела запроса возвращает 422.
 
 ## Состояние
 
 ### `GET /api/health` (без токена)
 
 ```json
-{"status":"ok","version":"1.0.0","uptime_sec":120,"mock":false}
+{"status":"ok","version":"1.2.0","uptime_sec":120,"mock":false}
 ```
 
 ### `GET /api/status`
 
 ```json
 {
-  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.0.0","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
+  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.2.0","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
   "modem": {
     "state":"idle","online":true,"sim_ready":true,"sim_state":"READY",
     "registered":true,"registration_status":1,"registration_text":"registered_home",
@@ -33,10 +35,16 @@
   "athena": {"connected":true,"fatal":null,"last_error":null,"url":"ws://...",
              "home":"Дом","device":"GSM","room":"Прихожая","features":{...},
              "reconnect_attempt":0,"last_command_id":42},
-  "audio": {"enabled":false,"active":false,"frames_in":0,"frames_out":0},
+  "audio": {"enabled":true,"active":false,"frames_in":0,"frames_out":0},
+  "voice_call": {"active":false,"playing":false,"listening":false,"speaking":false,
+                 "frames_in":0,"frames_out":0,"last_error":null,"sample_rate":16000},
+  "pcm_enabled": false,
   "stats": {"sms_in_log":3,"calls_in_log":2,"intercom_session":null}
 }
 ```
+
+`pcm_enabled` — включён ли PCM-маршрут модема (`AT+CPCMREG=1`) для текущего
+голосового звонка или моста.
 
 ### `GET /api/diagnostics`
 
@@ -52,6 +60,7 @@
 ```
 
 Ответ: `{"ok": true, "parts": 1}`. Длинный текст автоматически делится на части.
+Ограничения: номер 3–32 символа, текст 1–1000 символов (иначе 422).
 
 ### `GET /api/sms/recent?limit=50`
 
@@ -69,7 +78,7 @@
 {"ok": true, "code": "*100#", "status": 0, "response": "Баланс: 350 ₽"}
 ```
 
-Таймаут ответа сети — 30 с (503).
+Таймаут ответа сети — 30 с (503). Код: 1–32 символа из `0-9*#+`.
 
 ### `GET /api/ussd/recent`
 
@@ -84,7 +93,16 @@
 | POST `/api/calls/bridge` | `{"room":"Гостиная"}` или `{"endpoint_id":"..."}` | ответить (если ringing) + `call.bridge` в ядро |
 | GET `/api/calls/recent` | — | журнал звонков |
 
-`/api/calls/bridge` вернёт 503, если Athena не подключена.
+`POST /api/calls/answer` — «сырой» `ATA`: трубка поднимается, но голосовой
+ассистент **не** запускается, абонент услышит тишину. Голосовой сценарий
+запускается только командой ядра `call {action:"answer", mode:"assistant"}` или
+`mode:"bridge"` (см. [CALL_VOICE.md](CALL_VOICE.md)).
+
+`/api/calls/bridge` требует доступного аудио (`[audio_bridge].enabled` + ALSA,
+либо mock) и подключённой Athena. Отвечает на звонок, если он ещё ringing, и
+отправляет `call.bridge`; при недоступности аудио/ядра — 503. Ответ
+`{"ok": true, "room": "...", "target_endpoint_id": ...}` означает, что кадр
+`call.bridge` отправлен, а не что колонка уже ответила.
 
 ## Модем
 
@@ -138,7 +156,12 @@ Keepalive-комментарий каждые 15 с. Рекомендуется 
 Типы: `gateway.start`, `gateway.stop`, `modem.ready`, `modem.error`,
 `call.incoming`, `call.state`, `call.dialing`, `sms.incoming`, `sms.sent`,
 `dtmf`, `device.event`, `command.received`, `camera.motion`, `camera.snapshot`,
-`intercom.ringing`, `intercom.active`, `intercom.ended`.
+`intercom.ringing`, `intercom.active`, `intercom.ended`, `intercom.frame`,
+`bridge.error`, `core.error`.
+
+Голосовые события (`audio.start`, `audio.end`, `assistant.reply`, `audio.url`,
+`playback.stopped`, `conversation.end`) идут в WebSocket ядра и в диагностику;
+в SSE публикуются только служебные статусы `voice.*` при их наличии.
 
 ## Симулятор (только `modem.mock=true`)
 
@@ -153,8 +176,8 @@ Keepalive-комментарий каждые 15 с. Рекомендуется 
 
 | Код | Причина |
 |---|---|
-| 400 | неверное тело/формат |
 | 401 | нет или неверный токен |
-| 403 | команда вне allowlist |
+| 403 | токен в query для не-streaming пути; команда вне allowlist |
 | 404 | нет клипа |
-| 503 | модем занят/не готов, нет кадра, USSD без ответа, Athena offline |
+| 422 | тело запроса не прошло валидацию Pydantic |
+| 503 | модем занят/не готов/выключен, нет кадра, USSD без ответа, Athena offline, аудио для голосового звонка недоступно |

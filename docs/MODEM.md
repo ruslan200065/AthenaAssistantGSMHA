@@ -114,8 +114,11 @@ OK
 - Входящий: `RING` → `ATA`.
 - Сброс: `ATH`, при необходимости `AT+CHUP`.
 - DTMF: `AT+VTS=<digit>` по одному символу.
-- Удержание для моста: `AT+CHLD=2`.
-- Аудио: `AT+CPCMREG=1` (маршрут PCM в USB-аудио), `AT+CPCMREG=0` по завершении.
+- Удержание для моста: `AT+CHLD=2` (только при `hold_before_bridge = true`).
+- Аудио: `AT+CPCMREG=1` включает маршрут PCM в USB-аудио, `AT+CPCMREG=0` выключает.
+  Маршрут используется и для assistant voice (`voice_call.py`), и для intercom
+  bridge (`audio_bridge.py`): 16 кГц mono s16le, кадры 640 Б / 20 мс. Подробнее —
+  [CALL_VOICE.md](CALL_VOICE.md).
 
 Если номер не определился, шлюз пробует `AT+CLCC`; при неудаче звонок не
 уходит в ядро. Политика `reject` отклоняет такой звонок через `ATH`.

@@ -163,14 +163,23 @@ sudo apt install ffmpeg v4l-utils
 Слушайте `athena_sim7600_event` (общий) или конкретные события. В
 «Инструменты разработчика → События» подпишитесь и позвоните на шлюз.
 
-## Аудиомост
+## Аудио и тишина
 
-- Нужны `arecord`/`aplay` (`alsa-utils`) и USB-аудио интерфейс модема.
+- REST `/api/calls/answer` делает только `ATA` — тишина by design. Голосовой ответ
+  инициирует Athena командой `call {action:"answer", mode:"assistant"|"bridge"}`.
+- Голос требует `[audio_bridge].enabled=true`, `arecord`/`aplay` и USB-аудио модема
+  (или `modem.mock`). Иначе команда вернёт failed
+  `voice audio is unavailable...`; причина видна в `/api/status → voice_call.last_error`.
+- `bridge_call`/`mode=bridge` требует аудио и Athena. При ошибке bridge звонок
+  остаётся активным с fallback на assistant voice, либо завершается, если уже сброшен.
+- Нет `assistant.reply` за 45 с → диалог закрывается; follow-up ждёт 3–8 с
+  (минимум 3, по умолчанию 8).
 - Проверьте `arecord -l`, `aplay -l`; устройства в `[audio_bridge]` должны
-  существовать.
+  существовать (`auto` ищет карту с «SIM7600»).
 - `AT+CPCMREG=1` может не поддерживаться прошивкой — смотрите warning в логах.
-- Эхо/тишина: проверьте маршрутизацию ALSA (`alsamixer`), уровень микрофона.
-- Аудиомост выключен по умолчанию; включайте после проверки звонков.
+- Эхо/тишина: проверьте маршрутизацию ALSA (`alsamixer`) и уровень микрофона.
+- Аудио включено в HA add-on (`audio_enabled: true`); в `config.example.toml`
+  по умолчанию выключено — включайте после проверки звонков.
 
 ## Логи
 

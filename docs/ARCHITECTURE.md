@@ -1,6 +1,6 @@
 # Архитектура
 
-Шлюз — один asyncio-процесс. Внутри пять независимых слоёв, связанных через
+Шлюз — один asyncio-процесс. Внутри шесть независимых слоёв, связанных через
 `GatewayBridge`.
 
 ```mermaid
@@ -13,10 +13,11 @@ flowchart LR
   TR <--> HW[(SIM7600)]
   BR <--> CAM[camera.CameraService]
   CAM <--> FF[ffmpeg / V4L2]
+  BR <--> VC[voice_call.CallVoiceSession]
   BR <--> BUS[EventBus]
   BUS --> API[FastAPI REST + SSE]
   API <--> HA[Home Assistant]
-  BR <--> AUD[audio_bridge]
+  BR <--> AUD[audio_bridge: intercom PCM]
 ```
 
 ## Компоненты
@@ -31,7 +32,8 @@ flowchart LR
 | `modem/mock.py` | Полный симулятор модема для демо и тестов |
 | `camera/backend.py` | ffmpeg-процесс, JPEG-парсер, запись клипов |
 | `camera/service.py` | Кадры, MJPEG-подписчики, снимки, движение |
-| `audio_bridge.py` | arecord/aplay ↔ PCM 16 кГц для intercom |
+| `voice_call.py` | Голосовой диалог с абонентом: VAD, `audio.start`/PCM/`audio.end`, проигрывание `audio.url` |
+| `audio_bridge.py` | arecord/aplay ↔ PCM 16 кГц для intercom (bridge mode) |
 | `bridge.py` | Политики, маршрутизация команд/событий, журналы |
 | `bus.py` | Внутренняя шина событий и история для SSE |
 | `app.py` | REST, SSE, дашборд, авторизация |
@@ -89,6 +91,12 @@ sequenceDiagram
 `+7XXXXXXXXXX`. Если номер не определился, звонок не отправляется в ядро; при
 политике `reject` он отклоняется локально.
 
+Если bridge не запрошен, после `ATA` запускается `CallVoiceSession` — голосовой
+диалог с абонентом (assistant voice). При `mode="bridge"` шлюз сначала проверяет
+доступность аудио (`[audio_bridge].enabled` + ALSA/mock), затем отвечает и шлёт
+`call.bridge`. Если bridge не удался, а звонок ещё активен, происходит fallback на
+assistant voice; если звонок уже сброшен — шлюз завершает его.
+
 ### Исходящий звонок
 
 Команда `call {action:"dial"}` → `ATD<number>;` → `command.ack done` сразу после
@@ -137,6 +145,8 @@ stateDiagram-v2
 - Один `asyncio.Lock` в `AtChannel` сериализует AT-команды; URC обрабатываются
   отдельной очередью, поэтому `RING` не теряется во время `AT+CSQ`.
 - `AudioBridge` использует отдельный lock на запись в `aplay`.
+- `CallVoiceSession` сериализует захват/воспроизведение ALSA и глушит микрофон на
+  время проигрывания ответа, чтобы не поймать эхо.
 - `AthenaClient` сериализует отправку кадров одним `_send_lock`, чтобы
   heartbeat/ack/события не перемешивались на уровне websocket.
 
