@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from .client import AthenaAuthError, AthenaClient, AthenaReplaced, AthenaRevoked, local_ip
+from .client import (
+    AthenaAuthError,
+    AthenaClient,
+    AthenaReplaced,
+    AthenaRevoked,
+    http_base_url,
+    local_ip,
+)
 from .frames import (
     GSM_CAPABILITIES,
     call_bridge,
@@ -23,6 +30,7 @@ __all__ = [
     "AthenaReplaced",
     "AthenaRevoked",
     "local_ip",
+    "http_base_url",
     "hello",
     "heartbeat",
     "command_ack",

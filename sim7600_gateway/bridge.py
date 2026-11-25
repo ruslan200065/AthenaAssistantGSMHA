@@ -19,6 +19,7 @@ from .modem.errors import ModemError
 from .modem.mock import SimulatedModem
 from .modem.sim7600 import Sim7600
 from .util import mask_numbers, now_iso
+from .voice_call import CallVoiceSession
 
 log = get_logger("bridge")
 
@@ -55,10 +56,19 @@ class GatewayBridge:
             on_audio=self._on_core_audio,
         )
 
+        self.voice = CallVoiceSession(
+            config.audio_bridge,
+            send_json=self.athena.send_event,
+            send_binary=self.athena.send_binary,
+            token=config.athena.token,
+            http_base_url=athena.http_base_url(config.athena.url),
+        )
+
         self._sms_log: deque[dict[str, Any]] = deque(maxlen=100)
         self._calls_log: deque[dict[str, Any]] = deque(maxlen=100)
         self._ussd_log: deque[dict[str, Any]] = deque(maxlen=50)
         self._intercom_session: int | None = None
+        self._bridge_pending = False
         self._background: set[asyncio.Task] = set()
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -83,6 +93,7 @@ class GatewayBridge:
                 await self._modem_task
             self._modem_task = None
         await self.audio.stop()
+        await self.voice.stop()
         await self.modem.stop()
         await self.camera.stop()
         log.info("шлюз остановлен")
@@ -142,6 +153,8 @@ class GatewayBridge:
                     )
                 )
             if state in ("ended", "missed", "failed"):
+                self._bridge_pending = False
+                await self.voice.stop()
                 await self._end_intercom("hangup")
             return
 
@@ -190,16 +203,18 @@ class GatewayBridge:
             if not result.ok:
                 log.warning("не удалось ответить на звонок: %s", result.error)
                 return
-            sent = await self.athena.send_bridge(
-                {"room": modem_config.bridge_room, "call_number": number}
-            )
-            if sent:
+            bridged = await self.start_bridge(modem_config.bridge_room, None)
+            if bridged.get("ok"):
                 log.info("звонок %s соединён с комнатой «%s»", mask_numbers(number), modem_config.bridge_room)
+            else:
+                log.warning("call.bridge не отправлен: %s", bridged.get("error"))
             return
         if known and modem_config.auto_answer:
             await asyncio.sleep(max(0.0, modem_config.auto_answer_delay))
             result = await self.modem.answer()
-            if not result.ok:
+            if result.ok:
+                await self.voice.start()
+            else:
                 log.warning("автоответ не удался: %s", result.error)
 
     async def _record_ring_clip(self) -> None:
@@ -239,8 +254,22 @@ class GatewayBridge:
                     return {"status": "done"}
                 return {"status": "failed", "error": result.error or "dial failed"}
             if action == "answer":
+                mode = str(payload.get("mode") or "assistant")
+                bridge_room = str(payload.get("bridge_room") or "")
+                bridge_endpoint = payload.get("bridge_endpoint_id")
                 result = await self.modem.answer()
-                return {"status": "done"} if result.ok else {"status": "failed", "error": result.error}
+                if not result.ok:
+                    return {"status": "failed", "error": result.error}
+                if mode == "bridge" or bridge_room or bridge_endpoint:
+                    await self.voice.stop()
+                    bridged = await self.start_bridge(bridge_room, bridge_endpoint)
+                    if not bridged.get("ok"):
+                        log.warning("call.bridge не отправлен: %s", bridged.get("error"))
+                elif self._bridge_pending or self.audio.active:
+                    log.info("звонок уже соединён с колонкой, голосовой цикл не запускаю")
+                else:
+                    await self.voice.start()
+                return {"status": "done"}
             if action == "hangup":
                 result = await self.modem.hangup()
                 return {"status": "done"} if result.ok else {"status": "failed", "error": result.error}
@@ -295,10 +324,13 @@ class GatewayBridge:
 
     async def _on_protocol_frame(self, frame: dict[str, Any]) -> None:
         kind = str(frame.get("type") or "")
+        if self.voice.active and not kind.startswith("intercom."):
+            await self.voice.handle_frame(frame)
         if kind == "intercom.ringing":
             session = frame.get("session_id")
             if isinstance(session, int):
                 self._intercom_session = session
+            self._bridge_pending = True
             await self.bus.publish("intercom.ringing", frame)
             return
         if kind == "intercom.active":
@@ -313,6 +345,7 @@ class GatewayBridge:
             await self.audio.stop()
             if kind == "intercom.ended":
                 self._intercom_session = None
+                self._bridge_pending = False
             return
         if kind == "intercom.ack":
             await self.bus.publish(kind, frame)
@@ -352,6 +385,7 @@ class GatewayBridge:
             "camera": self.camera.info(),
             "athena": self.athena.status(),
             "audio": self.audio.status(),
+            "voice_call": self.voice.status,
             "stats": {
                 "sms_in_log": len(self._sms_log),
                 "calls_in_log": len(self._calls_log),
@@ -453,4 +487,5 @@ class GatewayBridge:
             return {"ok": False, "error": "room or endpoint_id is required"}
         target["call_number"] = self.modem.snapshot.caller or ""
         sent = await self.athena.send_bridge(target)
+        self._bridge_pending = bool(sent)
         return {"ok": sent, "room": target.get("room"), "target_endpoint_id": endpoint_id}

@@ -58,10 +58,11 @@ reset_gpio = 0                 # BCM pin when reset_method="gpio"
 
 [audio_bridge]
 # PCM bridge between the SIM7600 USB audio interface and an Athena speaker.
-# Disabled by default: it requires a USB audio device exposed by the modem.
+# Also enables voice calls: after ATA the gateway listens to the line and plays
+# assistant replies. "auto" finds the SIM7600 card in `arecord -l`.
 enabled = false
-capture_device = "plughw:1,0"
-playback_device = "plughw:1,0"
+capture_device = "auto"
+playback_device = "auto"
 sample_rate = 16000
 chunk_ms = 20
 # Hold the line before starting the bridge (AT+CHLD=2).

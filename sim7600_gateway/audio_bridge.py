@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import shutil
+import subprocess
 from collections.abc import Awaitable, Callable
 
 from .config import AudioBridgeConfig
@@ -19,8 +21,44 @@ log = get_logger("audio.bridge")
 
 FRAME_BYTES = 640  # 20 ms, 16 kHz, mono, s16le
 
+_ALSA_CARD = re.compile(
+    r"card\s+(\d+):\s+([^\[]*)\[([^\]]*)\].*?device\s+(\d+):\s+([^\[]*)\[([^\]]*)\]"
+)
+
+
+def detect_alsa_device(keyword: str = "SIM7600") -> str | None:
+    """Return ``plughw:<card>,<device>`` for the modem's USB audio interface."""
+    if not shutil.which("arecord"):
+        return None
+    try:
+        result = subprocess.run(
+            ["arecord", "-l"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    fallback: str | None = None
+    for line in result.stdout.splitlines():
+        match = _ALSA_CARD.search(line)
+        if not match:
+            continue
+        card, card_id, card_name, device, _dev_id, dev_name = match.groups()
+        candidate = f"plughw:{card},{device}"
+        if fallback is None:
+            fallback = candidate
+        haystack = f"{card_id} {card_name} {dev_name}".lower()
+        if keyword.lower() in haystack:
+            return candidate
+    return fallback
+
+
+def resolve_alsa_device(value: str, keyword: str = "SIM7600") -> str | None:
+    if value and value.strip().lower() not in ("auto", "default"):
+        return value.strip()
+    return detect_alsa_device(keyword) or ("default" if value.strip().lower() == "default" else None)
+
 
 class AudioBridge:
+
     def __init__(
         self,
         config: AudioBridgeConfig,
@@ -73,11 +111,13 @@ class AudioBridge:
                 with contextlib.suppress(Exception):
                     await channel.command("AT+CHLD=2", timeout=5)
         rate = str(self.config.sample_rate)
+        capture_device = resolve_alsa_device(self.config.capture_device) or self.config.capture_device
+        playback_device = resolve_alsa_device(self.config.playback_device) or self.config.playback_device
         capture_cmd = [
             "arecord",
             "-q",
             "-D",
-            self.config.capture_device,
+            capture_device,
             "-f",
             "S16_LE",
             "-r",
@@ -91,7 +131,7 @@ class AudioBridge:
             "aplay",
             "-q",
             "-D",
-            self.config.playback_device,
+            playback_device,
             "-f",
             "S16_LE",
             "-r",

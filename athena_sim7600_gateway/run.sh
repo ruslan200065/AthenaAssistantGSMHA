@@ -64,7 +64,12 @@ motion_detection = true
 motion_threshold = 0.035
 
 [audio_bridge]
-enabled = false
+enabled = {flag(options.get("audio_enabled", True))}
+capture_device = {q(options.get("audio_device") or "auto")}
+playback_device = {q(options.get("audio_device") or "auto")}
+sample_rate = 16000
+chunk_ms = 20
+hold_before_bridge = true
 """
 
 Path("/data/config.toml").write_text(config, encoding="utf-8")

@@ -20,7 +20,24 @@ Assistant. Интеграция `athena_sim7600` из корня репозит�
    достаточно встроенной **Generic Camera** (ниже).
 
 Приложение работает с `host_network: true`, поэтому порт 8099 доступен напрямую,
-а camera/GSM устройства проброшены через `full_access`, `uart`, `usb`, `video`.
+а camera/GSM/audio устройства проброшены через `full_access`, `uart`, `usb`,
+`video`, `audio`.
+
+## Голосовой звонок (разговор с Афиной)
+
+Опция `audio_enabled` включает голосовой цикл. `audio_device: "auto"` ищет
+USB-аудио SIM7600 через `arecord -l`; если auto не находит модем, укажите вручную,
+например `plughw:1,0`.
+
+После ответа на звонок шлюз:
+
+1. слушает линию через VAD (wake word не нужен);
+2. отправляет `audio.start` (16 кГц) → PCM 640 Б → `audio.end`;
+3. получает `assistant.reply` + `audio.url`, проигрывает ответ в трубку;
+4. после `playback.stopped` при `listen: true` ждёт продолжения и снова шлёт
+   `audio.start` с `follow_up: true`;
+5. при `bridge_room` вместо голосового цикла делает `call.bridge` и льёт PCM
+   в интерком-сессию.
 
 ## Камера в HA без HACS
 

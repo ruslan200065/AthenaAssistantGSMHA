@@ -16,6 +16,7 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .. import __version__
 from ..config import AthenaConfig
@@ -52,6 +53,19 @@ def local_ip() -> str:
         return "127.0.0.1"
     finally:
         sock.close()
+
+
+def http_base_url(ws_url: str) -> str:
+    """Derive ``http(s)://host[:port]`` from the core WebSocket URL."""
+    value = (ws_url or "").strip()
+    if value.startswith("wss://"):
+        value = "https://" + value[6:]
+    elif value.startswith("ws://"):
+        value = "http://" + value[5:]
+    parsed = urlparse(value)
+    if not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 class AthenaClient:
@@ -305,11 +319,12 @@ class AthenaClient:
             log.warning("ошибка ядра: %s — %s", message.get("code"), message.get("message"))
         elif kind == "welcome":
             self._welcome = message
-        elif kind and kind.startswith("intercom."):
-            if self._on_frame is not None:
-                result = self._on_frame(message)
-                if asyncio.iscoroutine(result):
-                    await result
+        elif self._on_frame is not None:
+            # audio.url / assistant.reply / asr.* / intercom.* are consumed by
+            # the bridge, not by the command dispatcher.
+            result = self._on_frame(message)
+            if asyncio.iscoroutine(result):
+                await result
         else:
             log.debug("кадр от ядра пропущен: %s", kind)
 

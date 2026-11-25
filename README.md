@@ -30,6 +30,9 @@
 
 - **Звонки**: входящие и исходящие, `ATD`, `ATA`, `ATH`, `+CLIP`, DTMF, определение
   номера, локальная политика (`allow` / `notify` / `reject`), автоответ.
+- **Разговор с Афиной по телефону**: после `ATA` шлюз слушает линию (VAD),
+  шлёт `audio.start/PCM/audio.end`, проигрывает `audio.url` в трубку и продолжает
+  диалог по `follow_up`. Wake-слово не нужно.
 - **SMS**: отправка и приём, GSM-7 и UCS-2, склейка длинных сообщений (UDH), полный
   PDU-кодек без внешних зависимостей. Номера и тексты не попадают в логи.
 - **USSD**: запрос баланса и сервисных меню, ответ уходит в ядро событием
@@ -141,6 +144,8 @@ room_hint = "Прихожая"
    - `api_token` — придумайте токен для интеграции HA;
    - `modem_port` — `/dev/ttyUSB2` (проверьте `ls /dev/ttyUSB*` на хосте);
    - `camera_device` — `/dev/video0`;
+   - `audio_enabled` — голосовой цикл звонка (разговор с Афиной);
+   - `audio_device` — `auto` или `plughw:1,0` (USB-аудио SIM7600);
    - `athena_url` / `athena_token` — ядро Athena, если используете;
    - `modem_mock` / `camera_mock` — включите, чтобы проверить без железа.
 4. Запустите приложение и проверьте `http://<HA-хост>:8099/api/health`.
@@ -292,6 +297,7 @@ AthenaAssistantGSMHA/
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Протокол Athena](docs/ATHENA_PROTOCOL.md)
 - [Модем и AT-команды](docs/MODEM.md)
+- [Голосовой звонок с Афиной](docs/CALL_VOICE.md)
 - [Камера](docs/CAMERA.md)
 - [Home Assistant](docs/HOME_ASSISTANT.md)
 - [REST API](docs/API.md)
