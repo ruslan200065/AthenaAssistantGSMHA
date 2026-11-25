@@ -107,3 +107,38 @@ def test_audio_start_has_real_sample_rate() -> None:
             await session.stop()
 
     asyncio.run(scenario())
+
+
+def test_duplicate_audio_url_is_ignored() -> None:
+    async def scenario() -> None:
+        async def send_json(frame: dict) -> bool:
+            return True
+
+        async def send_binary(frame: bytes) -> None:
+            return None
+
+        session = CallVoiceSession(AudioBridgeConfig(enabled=True), send_json, send_binary)
+        played: list[str] = []
+
+        async def fake_inner(frame: dict) -> None:
+            played.append(str(frame.get("utterance_id")))
+
+        session._play_url_inner = fake_inner  # type: ignore[method-assign]
+        try:
+            await session._play_url({"utterance_id": "u1", "url": "http://x/1"})
+            await session._play_url({"utterance_id": "u1", "url": "http://x/1"})
+            assert played == ["u1"]
+
+            session._fallback_spoken_for = "u2"
+            await session._play_url({"utterance_id": "u2", "url": "http://x/2"})
+            assert played == ["u1"]
+        finally:
+            await session.stop()
+
+    asyncio.run(scenario())
+
+
+def test_playback_volume_scaling() -> None:
+    pcm = struct.pack("<4h", 1000, -1000, 20000, -20000)
+    scaled = CallVoiceSession._scale_pcm(pcm, 0.5)
+    assert struct.unpack("<4h", scaled) == (500, -500, 10000, -10000)

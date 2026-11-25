@@ -198,6 +198,7 @@ enabled = true
 pcm_port = "/dev/ttyUSB4"
 pcm_baudrate = 115200
 audio_transport = "auto"
+playback_volume = 50          # громкость ответов в трубку, 0..200
 capture_device = "auto"
 playback_device = "auto"
 sample_rate = 16000
@@ -206,7 +207,14 @@ hold_before_bridge = false
 ```
 
 В HA add-on те же поля задаются опциями `audio_enabled`, `pcm_port`
-(обычно `/dev/ttyUSB4`) и `audio_device` (ALSA fallback).
+(обычно `/dev/ttyUSB4`), `audio_device` (ALSA fallback) и `playback_volume`
+(по умолчанию 50, как в рабочем референсе).
+
+Ядро присылает ровно один `assistant.reply` и один `audio.url` на реплику
+(один `utterance_id`). Шлюз дополнительно дедуплицирует `audio.url` по
+`utterance_id` и не запускает TTS-fallback, если URL уже пришёл или играет:
+повтор фразы в трубку исключён. Воспроизведение идёт по deadline-расписанию
+(20 мс на кадр), поэтому не «плывёт» и не заикается.
 
 ## 8. Диагностика
 

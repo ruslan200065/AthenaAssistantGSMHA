@@ -18,7 +18,7 @@
   "type": "hello",
   "token": "dev_...",
   "kind": "gsm",
-  "firmware": "sim7600-gateway/1.2.3",
+  "firmware": "sim7600-gateway/1.2.4",
   "hardware": "SIM7600E-H",
   "capabilities": ["calls", "sms", "dtmf", "audio_in", "audio_out", "camera"],
   "device_id": "sim7600-gateway-01",
@@ -85,7 +85,7 @@
   `conversation.end`.
 - `mode="bridge"` (или задан `bridge_room`/`bridge_endpoint_id`) — после `ATA`
   отправляется `call.bridge`; PCM идёт в intercom-сессию.
-- Аудио обязательно: без `[audio_bridge].enabled` и ALSA (либо mock) команда
+- Аудио обязательно: без `[audio_bridge].enabled` и serial PCM/ALSA (либо mock) команда
   получает `failed: voice audio is unavailable...`, звонок не поднимается.
 - Если bridge не удался, но звонок активен, шлюз отвечает
   `{"status":"done","mode":"assistant","warning":"..."}` и продолжает как

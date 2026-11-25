@@ -75,6 +75,7 @@ enabled = {flag(options.get("audio_enabled", True))}
 pcm_port = {q(options.get("pcm_port") or "/dev/ttyUSB4")}
 pcm_baudrate = 115200
 audio_transport = "auto"
+playback_volume = {int(options.get("playback_volume") or 50)}
 capture_device = {q(options.get("audio_device") or "auto")}
 playback_device = {q(options.get("audio_device") or "auto")}
 sample_rate = 16000

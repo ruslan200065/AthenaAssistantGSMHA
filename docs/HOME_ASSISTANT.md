@@ -8,7 +8,8 @@
 2. Добавьте `https://github.com/ruslan200065/AthenaAssistantGSMHA`.
 3. Установите «Athena SIM7600 Gateway» и откройте вкладку «Настройки»:
    `athena_url`, `athena_token`, `api_token`, `modem_port`, `camera_device`,
-   `pcm_port` (обычно `/dev/ttyUSB4`), `audio_device` (обычно `auto`).
+   `pcm_port` (обычно `/dev/ttyUSB4`), `audio_device` (обычно `auto`),
+   `playback_volume` (громкость ответов, по умолчанию 50).
 4. Запустите дополнение и откройте панель через ingress (порт 8099).
    API-токен также сохраняется в `/data/api_token.txt`.
 
@@ -26,7 +27,9 @@ cp -r custom_components/athena_sim7600 /config/custom_components/
 ### HACS (custom repository)
 
 1. HACS → «Интеграции» → ⋮ → «Пользовательские репозитории».
-2. URL: этот репозиторий — `custom_components/athena_sim7600` лежит в корне.
+2. URL: репозиторий, где `custom_components/athena_sim7600` лежит в корне.
+   В этом монорепозитории интеграция находится в `ha/`, поэтому проще указать
+   `ha/` как отдельный репозиторий либо установить вручную.
 3. Категория «Integration» → установить → перезапустить HA.
 
 ### Настройка

@@ -319,6 +319,8 @@ class GatewayBridge:
             log.warning("не удалось включить PCM-маршрут для голоса")
             await self._stop_voice_call()
             return False
+        if not await self.voice.prime():
+            log.warning("PCM-маршрут не подтвердил запись; продолжаю без блокировки")
         return True
 
     async def _stop_voice_call(self) -> None:

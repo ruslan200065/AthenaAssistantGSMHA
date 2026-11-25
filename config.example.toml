@@ -66,6 +66,7 @@ enabled = false
 pcm_port = "/dev/ttyUSB4"
 pcm_baudrate = 115200
 audio_transport = "auto"        # auto | serial | alsa
+playback_volume = 50            # громкость ответов в трубку, 0..200
 capture_device = "auto"         # ALSA fallback only
 playback_device = "auto"        # ALSA fallback only
 sample_rate = 16000

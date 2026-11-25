@@ -87,6 +87,7 @@ class AudioBridgeConfig:
     pcm_port: str = "/dev/ttyUSB4"
     pcm_baudrate: int = 115200
     audio_transport: str = "auto"  # auto | serial | alsa
+    playback_volume: int = 50      # 0..200, percent for replies into the line
     sample_rate: int = 16000
     chunk_ms: int = 20
     # Experimental: AT+CHLD=2 holds the active call while the PCM bridge is
@@ -215,6 +216,9 @@ def apply_env(cfg: Config) -> Config:
     cfg.audio_bridge.audio_transport = _env_str(
         "AUDIO_TRANSPORT", cfg.audio_bridge.audio_transport
     )
+    cfg.audio_bridge.playback_volume = _env_int(
+        "PLAYBACK_VOLUME", cfg.audio_bridge.playback_volume
+    )
     return cfg
 
 
@@ -267,6 +271,8 @@ def validate(cfg: Config) -> list[str]:
             warnings.append("audio_bridge.chunk_ms must be between 5 and 100")
         if cfg.audio_bridge.audio_transport not in ("auto", "serial", "alsa"):
             warnings.append("audio_bridge.audio_transport must be auto|serial|alsa")
+        if not 0 <= cfg.audio_bridge.playback_volume <= 200:
+            warnings.append("audio_bridge.playback_volume must be between 0 and 200")
     if cfg.camera.input_format not in ("auto", "mjpg", "yuyv", "h264"):
         warnings.append("camera.input_format must be auto|mjpg|yuyv|h264")
     return warnings

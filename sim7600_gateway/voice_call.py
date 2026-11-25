@@ -18,9 +18,11 @@ import contextlib
 import json
 import math
 import struct
+import sys
 import time
 import urllib.request
 import uuid
+from array import array
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -106,6 +108,10 @@ class CallVoiceSession:
         self._pre_roll: deque[bytes] = deque(maxlen=self._pre_roll_len)
         self._reply: dict[str, Any] | None = None
         self._reply_task: asyncio.Task | None = None
+        self._reply_audio_pending = False
+        self._reply_utterance_id: str | None = None
+        self._fallback_spoken_for: str | None = None
+        self._played_utterances: deque[str] = deque(maxlen=8)
         self._timeout_task: asyncio.Task | None = None
         self._reply_wait_task: asyncio.Task | None = None
         self._play_lock = asyncio.Lock()
@@ -257,6 +263,23 @@ class CallVoiceSession:
                 return False
         return True
 
+    async def prime(self) -> bool:
+        """Push one silent frame so the modem's USB PCM path is verified."""
+        frame = b"\x00" * self._frame_bytes
+        try:
+            if self._serial is not None:
+                await self._serial.write(frame)
+            elif self._aplay is not None and self._aplay.stdin is not None:
+                self._aplay.stdin.write(frame)
+                await self._aplay.stdin.drain()
+            else:
+                return False
+            return True
+        except (OSError, PcmClosed) as exc:
+            self._last_error = str(exc)
+            log.warning("не удалось проверить PCM-маршрут: %s", exc)
+            return False
+
     async def stop(self) -> None:
         self._active = False
         self._listening = False
@@ -298,6 +321,12 @@ class CallVoiceSession:
         kind = str(frame.get("type") or "")
         if kind == "assistant.reply":
             self._reply = frame
+            self._reply_utterance_id = str(frame.get("utterance_id") or "") or None
+            self._fallback_spoken_for = None
+            # Do not start a new utterance while TTS is being synthesized or
+            # downloaded; playback/follow-up re-enables listening later.
+            self._listening = False
+            self._pre_roll.clear()
             self._reset_reply_wait()
             if self._reply_task is not None:
                 self._reply_task.cancel()
@@ -336,15 +365,36 @@ class CallVoiceSession:
         # audio.url normally follows assistant.reply immediately. If TTS was
         # unavailable, try the device TTS endpoint and then close the turn.
         with contextlib.suppress(asyncio.CancelledError):
-            await asyncio.sleep(1.8)
-        if not self._active or self._playing:
+            await asyncio.sleep(6.0)
+        if not self._active or self._playing or self._reply_audio_pending:
             return
+        # An audio.url may arrive after this task was cancelled but before the
+        # event loop notices; never speak the text a second time.
         text = str((self._reply or {}).get("text") or "").strip()
-        if text:
-            await self._play_tts(text)
+        if text and await self._play_tts(text):
+            self._fallback_spoken_for = self._reply_utterance_id
         await self._after_playback()
 
     async def _play_url(self, frame: dict[str, Any]) -> None:
+        utterance_id = str(frame.get("utterance_id") or "")
+        if utterance_id and utterance_id == self._fallback_spoken_for:
+            log.info("звонок: audio.url %s уже озвучен локальным TTS — пропущен", utterance_id)
+            return
+        if utterance_id and utterance_id in self._played_utterances:
+            log.info("звонок: повторный audio.url %s пропущен", utterance_id)
+            return
+        if self._playing:
+            log.warning("звонок: audio.url пришёл во время воспроизведения — пропущен")
+            return
+        if utterance_id:
+            self._played_utterances.append(utterance_id)
+        self._reply_audio_pending = True
+        try:
+            await self._play_url_inner(frame)
+        finally:
+            self._reply_audio_pending = False
+
+    async def _play_url_inner(self, frame: dict[str, Any]) -> None:
         url = str(frame.get("url") or "").strip()
         text = str(frame.get("text") or (self._reply or {}).get("text") or "")
         if url:
@@ -655,15 +705,32 @@ class CallVoiceSession:
         total = len(pcm) / 2 / target
         if duration:
             total = min(total, max(0.0, duration))
-        deadline = time.monotonic() + total
+            pcm = pcm[: max(0, int(total * target)) * 2]
+        if not pcm:
+            return "error"
+        volume = int(getattr(self.config, "playback_volume", 100) or 100)
+        if volume != 100:
+            pcm = await asyncio.to_thread(self._scale_pcm, pcm, volume / 100)
+
+        # Deadline scheduling (like the working reference): do not add write
+        # time on top of the 20 ms frame, otherwise playback drifts and the
+        # modem underruns. Pad the last frame so the codec always gets 640 B.
+        interval = self._frame_seconds
+        loop = asyncio.get_running_loop()
+        deadline = loop.time()
         offset = 0
         while offset < len(pcm):
             if not self._active:
                 return "interrupted"
-            if time.monotonic() >= deadline:
-                break
             chunk = pcm[offset : offset + self._frame_bytes]
             offset += len(chunk)
+            if len(chunk) < self._frame_bytes:
+                chunk = chunk + b"\x00" * (self._frame_bytes - len(chunk))
+            now = loop.time()
+            if now - deadline >= interval:
+                deadline = now
+            if deadline > now:
+                await asyncio.sleep(deadline - now)
             try:
                 if self._serial is not None:
                     await self._serial.write(chunk)
@@ -674,9 +741,25 @@ class CallVoiceSession:
             except (ConnectionResetError, BrokenPipeError, PcmClosed):
                 return "error"
             self._frames_out += 1
-            await asyncio.sleep(self._frame_seconds)
+            deadline += interval
+        await asyncio.sleep(max(0.0, deadline - loop.time()))
         log.info("звонок: ответ проигран в линию (%.1f c)", total)
         return "finished"
+
+    @staticmethod
+    def _scale_pcm(pcm: bytes, gain: float) -> bytes:
+        """Scale little-endian s16 PCM with clipping."""
+        samples = array("h")
+        samples.frombytes(pcm)
+        if sys.byteorder != "little":
+            samples.byteswap()
+        samples = array(
+            "h",
+            [max(-32768, min(32767, int(sample * gain))) for sample in samples],
+        )
+        if sys.byteorder != "little":
+            samples.byteswap()
+        return samples.tobytes()
 
     def _download(self, url: str) -> bytes:
         parsed = urlparse(url)

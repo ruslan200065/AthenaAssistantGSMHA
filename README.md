@@ -147,6 +147,7 @@ room_hint = "Прихожая"
    - `camera_device` — `/dev/video0`;
    - `audio_enabled` — голосовой цикл звонка (разговор с Афиной);
    - `audio_device` — `auto` или `plughw:1,0` (ALSA fallback, если нет PCM-порта);
+   - `playback_volume` — громкость ответов в трубку, 0–200 (по умолчанию 50);
    - `athena_url` / `athena_token` — ядро Athena, если используете;
    - `modem_mock` / `camera_mock` — включите, чтобы проверить без железа.
 4. Запустите приложение и проверьте `http://<HA-хост>:8099/api/health`.
@@ -266,7 +267,7 @@ cd AthenaAssistantGSMHA
 python -m pytest -q
 ```
 
-60 тестов: PDU-кодек (эталонные векторы, UCS-2, склейка), AT-канал, симулятор
+62 теста: PDU-кодек (эталонные векторы, UCS-2, склейка), AT-канал, симулятор
 модема, WebSocket-клиент ядра против локального сервера, REST API, конфиг, камера,
 голосовой диалог (`test_voice_call.py`), полный сценарий bridge с фейковым ядром.
 

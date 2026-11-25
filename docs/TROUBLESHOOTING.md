@@ -180,6 +180,11 @@ sudo apt install ffmpeg v4l-utils
   `/dev/ttyUSB4` должен быть виден в контейнере (`uart: true`).
 - `AT+CPCMREG=1` может не поддерживаться прошивкой — смотрите warning в логах.
 - Эхо/тишина: проверьте маршрутизацию ALSA (`alsamixer`) и уровень микрофона.
+- Фраза повторяется дважды: ядро присылает одну реплику/один URL; шлюз
+  дедуплицирует `audio.url` и не запускает TTS-fallback после URL. Если
+  повтор остался — пришлите DEBUG-лог с `utterance_id`.
+- Тихий/искажённый голос: `playback_volume` (0–200, по умолчанию 50), проверьте
+  `voice_call.transport=serial` и `voice_call.last_error`.
 - Аудио включено в HA add-on (`audio_enabled: true`); в `config.example.toml`
   по умолчанию выключено — включайте после проверки звонков.
 
