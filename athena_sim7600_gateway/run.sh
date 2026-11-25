@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 options_path = Path("/data/options.json")
-options = json.loads(options_path.read_text("utf-8")) if options_path.exists() else {}
+options = json.loads(options_path.read_text("utf-8-sig")) if options_path.exists() else {}
 
 def q(value) -> str:
     return json.dumps(str(value), ensure_ascii=False)
