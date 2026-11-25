@@ -20,7 +20,7 @@ panel_icon: mdi:phone-in-talk
 panel_title: Athena GSM
 watchdog: "http://[HOST]:8099/api/health"
 options:
-  athena_enabled: true
+  athena_enabled: false
   athena_url: "ws://homeassistant.local:8000/api/device/ws"
   athena_token: ""
   api_token: "change-me-please"
