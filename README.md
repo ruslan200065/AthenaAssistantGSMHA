@@ -133,6 +133,13 @@ cp -r custom_components/athena_sim7600 /config/custom_components/
 Athena SIM7600 GSM». Укажите URL шлюза (`http://192.168.1.50:8099`) и
 `bridge.api_token`.
 
+Репозиторий можно добавить в HACS как custom repository (категория Integration):
+`custom_components/athena_sim7600` уже лежит в корне.
+
+> Для проверки без модема запустите шлюз на любой машине в сети:
+> `python -m sim7600_gateway --mock --no-athena --port 8099`.
+> В `config.toml` задайте `bridge.api_token` и используйте этот же токен в HA.
+
 Появятся:
 
 - сенсоры: состояние модема, сигнал (dBm/%), оператор, сеть, регистрация, SIM,
@@ -217,7 +224,7 @@ python -m pytest -q
 ## Структура
 
 ```
-sim7600-gateway/
+AthenaAssistantGSMHA/
 ├── sim7600_gateway/
 │   ├── athena/          # клиент device-protocol/1, кадры
 │   ├── modem/           # AT-канал, PDU, SIM7600, симулятор
