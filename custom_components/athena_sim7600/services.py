@@ -21,9 +21,25 @@ from .const import (
     SERVICE_SNAPSHOT,
 )
 
+SERVICES = (
+    SERVICE_SEND_SMS,
+    SERVICE_SEND_USSD,
+    SERVICE_DIAL,
+    SERVICE_ANSWER,
+    SERVICE_HANGUP,
+    SERVICE_RESET,
+    SERVICE_SNAPSHOT,
+    SERVICE_RECORD,
+    SERVICE_BRIDGE,
+)
+
 
 def _entries(hass: HomeAssistant) -> list:
-    return [entry for entry in hass.config_entries.async_entries(DOMAIN) if getattr(entry, "runtime_data", None)]
+    return [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if getattr(entry, "runtime_data", None)
+    ]
 
 
 def _runtime(hass: HomeAssistant, call: ServiceCall):
@@ -176,3 +192,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         ),
         supports_response=SupportsResponse.OPTIONAL,
     )
+
+
+def async_unload_services(hass: HomeAssistant) -> None:
+    """Remove global services when the last config entry is unloaded."""
+    for service in SERVICES:
+        if hass.services.has_service(DOMAIN, service):
+            hass.services.async_remove(DOMAIN, service)
+    hass.data.pop(f"{DOMAIN}_services_registered", None)

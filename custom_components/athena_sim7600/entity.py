@@ -24,7 +24,7 @@ class AthenaSim7600Entity(CoordinatorEntity[AthenaSim7600Coordinator]):
         gateway = (self.coordinator.data or {}).get("gateway") or {}
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry.entry_id)},
-            name=gateway.get("name") or "Athena GSM",
+            name="Athena GSM",
             manufacturer=MANUFACTURER,
             model=modem.get("model") or "SIM7600",
             sw_version=modem.get("firmware") or gateway.get("version"),

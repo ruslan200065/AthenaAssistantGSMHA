@@ -17,7 +17,6 @@ import asyncio
 import contextlib
 import json
 import math
-import shutil
 import struct
 import time
 import urllib.request
@@ -25,24 +24,40 @@ import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlparse
 
-from .audio_bridge import resolve_alsa_device
+from .audio_bridge import audio_devices, frame_bytes
 from .config import AudioBridgeConfig
 from .log import get_logger
 
 log = get_logger("audio.call")
 
-FRAME_BYTES = 640  # 20 ms, 16 kHz, mono, s16le
-SAMPLE_RATE = 16000
-FRAME_SECONDS = FRAME_BYTES / 2 / SAMPLE_RATE
-SILENCE_FRAMES = 35  # ~700 ms
-PRE_ROLL_FRAMES = 15  # ~300 ms
-MAX_UTTERANCE_FRAMES = 1000  # 20 s
+PROCESS_READY_DELAY = 0.15
+FIRST_FRAME_TIMEOUT = 1.0
+SILENCE_SECONDS = 0.7
+PRE_ROLL_SECONDS = 0.3
+MAX_UTTERANCE_SECONDS = 20.0
 MIN_THRESHOLD = 220.0
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
+PLAYBACK_REASONS = frozenset({"user", "finished", "error", "transfer", "interrupted"})
 
 JsonSender = Callable[[dict[str, Any]], Awaitable[bool]]
 BinarySender = Callable[[bytes], Awaitable[None]]
+StoppedHandler = Callable[[str], Awaitable[None] | None]
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float | None = None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class CallVoiceSession:
@@ -54,12 +69,21 @@ class CallVoiceSession:
         *,
         token: str = "",
         http_base_url: str = "",
+        on_stopped: StoppedHandler | None = None,
     ):
         self.config = config
         self._send_json = send_json
         self._send_binary = send_binary
         self._token = token
         self._http_base = http_base_url.rstrip("/")
+        self._http_host = urlparse(self._http_base).hostname
+        self._on_stopped = on_stopped
+
+        self._frame_bytes = frame_bytes(config)
+        self._frame_seconds = self._frame_bytes / 2 / max(1, config.sample_rate)
+        self._silence_limit = max(1, round(SILENCE_SECONDS / self._frame_seconds))
+        self._pre_roll_len = max(1, round(PRE_ROLL_SECONDS / self._frame_seconds))
+        self._max_utterance_frames = max(1, round(MAX_UTTERANCE_SECONDS / self._frame_seconds))
 
         self._active = False
         self._arec: asyncio.subprocess.Process | None = None
@@ -73,15 +97,18 @@ class CallVoiceSession:
         self._awaiting_reply = False
         self._utterance_id: str | None = None
         self._utterance_started = 0.0
+        self._utterance_frames = 0
         self._speech_frames = 0
         self._silence_frames = 0
         self._noise = 180.0
-        self._pre_roll: deque[bytes] = deque(maxlen=PRE_ROLL_FRAMES)
+        self._pre_roll: deque[bytes] = deque(maxlen=self._pre_roll_len)
         self._reply: dict[str, Any] | None = None
         self._reply_task: asyncio.Task | None = None
         self._timeout_task: asyncio.Task | None = None
         self._reply_wait_task: asyncio.Task | None = None
         self._play_lock = asyncio.Lock()
+        self._interrupted = False
+        self._capture_ready = asyncio.Event()
         self._last_error: str | None = None
         self._frames_in = 0
         self._frames_out = 0
@@ -97,6 +124,8 @@ class CallVoiceSession:
             "playing": self._playing,
             "listening": self._listening,
             "speaking": self._speaking,
+            "awaiting_reply": self._awaiting_reply,
+            "sample_rate": self.config.sample_rate,
             "frames_in": self._frames_in,
             "frames_out": self._frames_out,
             "last_error": self._last_error,
@@ -107,20 +136,13 @@ class CallVoiceSession:
     async def start(self) -> bool:
         if self._active:
             return True
-        if not self.config.enabled:
-            log.warning("голосовой цикл выключен: audio_bridge.enabled = false")
+        ok, capture, playback, error = await audio_devices(self.config)
+        if not ok:
+            self._last_error = error
+            log.warning("голосовой цикл недоступен: %s", error)
             return False
-        if not shutil.which("arecord") or not shutil.which("aplay"):
-            self._last_error = "arecord/aplay not installed"
-            log.warning("нет arecord/aplay — голос в звонке недоступен")
-            return False
-        capture = resolve_alsa_device(self.config.capture_device)
-        playback = resolve_alsa_device(self.config.playback_device)
-        if not capture or not playback:
-            self._last_error = "ALSA capture/playback device not found"
-            log.warning("не найдено аудиоустройство SIM7600 (arecord -l)")
-            return False
-        rate = str(SAMPLE_RATE)
+        assert capture is not None and playback is not None
+        rate = str(self.config.sample_rate)
         try:
             self._arec = await asyncio.create_subprocess_exec(
                 "arecord",
@@ -165,19 +187,48 @@ class CallVoiceSession:
         self._follow_up = False
         self._speaking = False
         self._awaiting_reply = False
+        self._interrupted = False
         self._reply = None
         self._pre_roll.clear()
+        self._capture_ready.clear()
         self._tasks = [
             asyncio.create_task(self._capture_loop(), name="call-capture"),
             asyncio.create_task(self._stderr_loop(self._arec, "arecord"), name="call-arec-err"),
             asyncio.create_task(self._stderr_loop(self._aplay, "aplay"), name="call-aplay-err"),
         ]
-        log.info("голосовой цикл звонка запущен (%s / %s, 16 кГц)", capture, playback)
+
+        # arecord/aplay report a missing/busy device asynchronously.
+        await asyncio.sleep(PROCESS_READY_DELAY)
+        if not self._processes_alive():
+            self._last_error = self._last_error or "arecord/aplay exited during startup"
+            log.error("голосовой цикл: ALSA-процесс завершился на старте")
+            await self.stop()
+            return False
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._capture_ready.wait(), FIRST_FRAME_TIMEOUT)
+        if not self._processes_alive():
+            self._last_error = self._last_error or "arecord/aplay exited during startup"
+            await self.stop()
+            return False
+        log.info(
+            "голосовой цикл звонка запущен (%s / %s, %s Гц, кадр %s байт)",
+            capture,
+            playback,
+            self.config.sample_rate,
+            self._frame_bytes,
+        )
+        return True
+
+    def _processes_alive(self) -> bool:
+        for process in (self._arec, self._aplay):
+            if process is None or process.returncode is not None:
+                return False
         return True
 
     async def stop(self) -> None:
         self._active = False
         self._listening = False
+        self._interrupted = True
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
@@ -190,6 +241,12 @@ class CallVoiceSession:
         self._reply_task = None
         self._timeout_task = None
         self._reply_wait_task = None
+        self._pre_roll.clear()
+        self._reply = None
+        self._playing = False
+        self._speaking = False
+        self._awaiting_reply = False
+        self._follow_up = False
         for process in (self._arec, self._aplay):
             if process is not None and process.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
@@ -205,9 +262,7 @@ class CallVoiceSession:
         kind = str(frame.get("type") or "")
         if kind == "assistant.reply":
             self._reply = frame
-            if self._reply_wait_task is not None:
-                self._reply_wait_task.cancel()
-                self._reply_wait_task = None
+            self._reset_reply_wait()
             if self._reply_task is not None:
                 self._reply_task.cancel()
             self._reply_task = asyncio.create_task(self._reply_fallback(), name="call-reply")
@@ -216,6 +271,7 @@ class CallVoiceSession:
             if self._reply_task is not None:
                 self._reply_task.cancel()
                 self._reply_task = None
+            self._reset_reply_wait()
             await self._play_url(frame)
             return
         if kind == "assistant.error":
@@ -224,9 +280,21 @@ class CallVoiceSession:
             return
         if kind == "conversation.end":
             self._listening = False
+            if self._timeout_task is not None:
+                self._timeout_task.cancel()
+                self._timeout_task = None
             return
         if kind in ("asr.partial", "asr.final"):
             log.debug("ASR: %s", frame.get("text"))
+
+    def _reset_reply_wait(self) -> None:
+        """A reply arrived: the microphone may listen again after playback."""
+        self._awaiting_reply = False
+        self._speech_frames = 0
+        self._silence_frames = 0
+        if self._reply_wait_task is not None:
+            self._reply_wait_task.cancel()
+            self._reply_wait_task = None
 
     async def _reply_fallback(self) -> None:
         # audio.url normally follows assistant.reply immediately. If TTS was
@@ -236,40 +304,41 @@ class CallVoiceSession:
         if not self._active or self._playing:
             return
         text = str((self._reply or {}).get("text") or "").strip()
-        played = False
         if text:
-            played = await self._play_tts(text)
-        if not played:
-            await self._after_playback()
+            await self._play_tts(text)
+        await self._after_playback()
 
     async def _play_url(self, frame: dict[str, Any]) -> None:
         url = str(frame.get("url") or "").strip()
-        if not url:
-            await self._play_tts(str(frame.get("text") or (self._reply or {}).get("text") or ""))
-            await self._after_playback()
-            return
-        try:
-            data = await asyncio.to_thread(self._download, url)
-        except Exception as exc:
-            self._last_error = str(exc)
-            log.warning("не удалось скачать audio.url: %s", exc)
-            await self._play_tts(str(frame.get("text") or (self._reply or {}).get("text") or ""))
-            await self._after_playback()
-            return
-        duration = frame.get("duration")
-        await self._play_encoded(data, float(duration) if duration else None)
+        text = str(frame.get("text") or (self._reply or {}).get("text") or "")
+        if url:
+            try:
+                data = await asyncio.to_thread(self._download, url)
+            except Exception as exc:
+                self._last_error = str(exc)
+                log.warning("не удалось скачать audio.url: %s", exc)
+                await self._play_tts(text)
+            else:
+                await self._play_encoded(data, _safe_float(frame.get("duration")))
+        elif text:
+            await self._play_tts(text)
         await self._after_playback()
 
     async def _after_playback(self) -> None:
         if not self._active:
             return
+        self._awaiting_reply = False
+        self._speech_frames = 0
+        self._silence_frames = 0
+        self._pre_roll.clear()
+        self._reset_reply_wait()
         reply = self._reply or {}
         listen = bool(reply.get("listen"))
-        timeout = int(reply.get("follow_up_timeout_seconds") or 0)
+        timeout = max(3, _safe_int(reply.get("follow_up_timeout_seconds"), 8) or 8)
         if listen and not reply.get("end", False):
             self._listening = True
             self._follow_up = True
-            self._schedule_followup_timeout(max(3, timeout or 8))
+            self._schedule_followup_timeout(timeout)
             log.info("звонок: жду продолжения диалога")
         else:
             self._listening = False
@@ -280,9 +349,11 @@ class CallVoiceSession:
         self._listening = False
         self._speaking = False
         self._awaiting_reply = False
+        self._follow_up = False
         if self._timeout_task is not None:
             self._timeout_task.cancel()
             self._timeout_task = None
+        self._reset_reply_wait()
         await self._emit({"type": "conversation.end", "reason": reason})
 
     def _schedule_followup_timeout(self, seconds: int) -> None:
@@ -292,7 +363,12 @@ class CallVoiceSession:
         async def wait_and_end() -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await asyncio.sleep(seconds)
-            if self._active and not self._speaking and not self._playing:
+            if (
+                self._active
+                and not self._speaking
+                and not self._playing
+                and not self._awaiting_reply
+            ):
                 log.info("звонок: продолжения не было за %s c", seconds)
                 await self._end_dialogue("timeout")
 
@@ -306,38 +382,11 @@ class CallVoiceSession:
         try:
             while self._active:
                 try:
-                    frame = await stream.readexactly(FRAME_BYTES)
+                    frame = await stream.readexactly(self._frame_bytes)
                 except asyncio.IncompleteReadError:
                     break
-                if self._playing:
-                    continue
-                level = rms(frame)
-                if not self._speaking:
-                    if not self._listening or self._awaiting_reply:
-                        self._pre_roll.clear()
-                        continue
-                    self._pre_roll.append(frame)
-                    threshold = max(MIN_THRESHOLD, self._noise * 2.4)
-                    if level > threshold:
-                        self._speech_frames += 1
-                        if self._speech_frames >= 2:
-                            await self._begin_utterance()
-                            for buffered in self._pre_roll:
-                                await self._send_frame(buffered)
-                            self._pre_roll.clear()
-                    else:
-                        self._speech_frames = 0
-                        self._noise = self._noise * 0.99 + level * 0.01
-                else:
-                    await self._send_frame(frame)
-                    threshold = max(MIN_THRESHOLD, self._noise * 2.4)
-                    if level < threshold * 0.8:
-                        self._silence_frames += 1
-                    else:
-                        self._silence_frames = 0
-                    elapsed = time.monotonic() - self._utterance_started
-                    if self._silence_frames >= SILENCE_FRAMES or elapsed > 20:
-                        await self._end_utterance()
+                self._capture_ready.set()
+                await self._process_frame(frame)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # pragma: no cover - hardware/ALSA errors
@@ -346,23 +395,71 @@ class CallVoiceSession:
         finally:
             if self._active:
                 self._active = False
+                self._listening = False
                 log.warning("arecord в звонке завершился")
+                self._notify_stopped("arecord завершился")
+
+    async def _process_frame(self, frame: bytes) -> None:
+        if self._playing:
+            self._pre_roll.clear()
+            return
+        level = rms(frame)
+        if not self._speaking:
+            if not self._listening or self._awaiting_reply:
+                self._pre_roll.clear()
+                return
+            self._pre_roll.append(frame)
+            threshold = max(MIN_THRESHOLD, self._noise * 2.4)
+            if level > threshold:
+                self._speech_frames += 1
+                if self._speech_frames >= 2:
+                    await self._begin_utterance()
+                    for buffered in self._pre_roll:
+                        await self._send_frame(buffered)
+                    self._pre_roll.clear()
+            else:
+                self._speech_frames = 0
+                self._noise = self._noise * 0.99 + level * 0.01
+            return
+
+        await self._send_frame(frame)
+        self._utterance_frames += 1
+        threshold = max(MIN_THRESHOLD, self._noise * 2.4)
+        if level < threshold * 0.8:
+            self._silence_frames += 1
+        else:
+            self._silence_frames = 0
+        elapsed = time.monotonic() - self._utterance_started
+        if (
+            self._silence_frames >= self._silence_limit
+            or self._utterance_frames >= self._max_utterance_frames
+            or elapsed > MAX_UTTERANCE_SECONDS
+        ):
+            await self._end_utterance()
 
     async def _begin_utterance(self) -> None:
         self._speaking = True
+        self._awaiting_reply = False
         self._silence_frames = 0
+        self._utterance_frames = 0
         self._utterance_started = time.monotonic()
         self._utterance_id = f"gsm-{uuid.uuid4().hex[:12]}"
+        if self._timeout_task is not None:
+            self._timeout_task.cancel()
+            self._timeout_task = None
         await self._emit(
             {
                 "type": "audio.start",
                 "utterance_id": self._utterance_id,
-                "sample_rate": SAMPLE_RATE,
+                "sample_rate": self.config.sample_rate,
                 "format": "pcm_s16le",
                 "follow_up": self._follow_up,
             }
         )
-        log.info("звонок: речь абонента → audio.start%s", " (follow_up)" if self._follow_up else "")
+        log.info(
+            "звонок: речь абонента → audio.start%s",
+            " (follow_up)" if self._follow_up else "",
+        )
 
     async def _end_utterance(self) -> None:
         if not self._speaking:
@@ -407,13 +504,13 @@ class CallVoiceSession:
             return False
         if not pcm:
             return False
-        await self._play_pcm(pcm, rate)
+        await self._play_guarded(pcm, rate)
         return True
 
     async def _play_encoded(self, data: bytes, duration: float | None) -> None:
         async with self._play_lock:
-            self._playing = True
-            self._listening = False
+            await self._playback_begin()
+            reason = "interrupted"
             try:
                 process = await asyncio.create_subprocess_exec(
                     "ffmpeg",
@@ -427,7 +524,7 @@ class CallVoiceSession:
                     "-acodec",
                     "pcm_s16le",
                     "-ar",
-                    str(SAMPLE_RATE),
+                    str(self.config.sample_rate),
                     "-ac",
                     "1",
                     "pipe:1",
@@ -436,38 +533,89 @@ class CallVoiceSession:
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 pcm, _ = await process.communicate(data)
-                await self._play_pcm(pcm, SAMPLE_RATE, duration)
+                if not pcm:
+                    reason = "error"
+                else:
+                    reason = await self._play_pcm(pcm, self.config.sample_rate, duration)
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:  # pragma: no cover - ffmpeg/ALSA
+                reason = "error"
                 self._last_error = str(exc)
                 log.warning("воспроизведение ответа в линию не удалось: %s", exc)
             finally:
-                self._playing = False
-                await self._emit({"type": "playback.stopped", "reason": "done"})
+                await self._playback_end(reason)
 
-    async def _play_pcm(self, pcm: bytes, rate: int, duration: float | None = None) -> None:
+    async def _play_guarded(self, pcm: bytes, rate: int) -> None:
+        async with self._play_lock:
+            await self._playback_begin()
+            reason = "interrupted"
+            try:
+                reason = await self._play_pcm(pcm, rate)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - ALSA
+                reason = "error"
+                self._last_error = str(exc)
+                log.warning("воспроизведение TTS в линию не удалось: %s", exc)
+            finally:
+                await self._playback_end(reason)
+
+    async def _playback_begin(self) -> None:
+        self._playing = True
+        self._listening = False
+        self._speaking = False
+        self._awaiting_reply = False
+        self._speech_frames = 0
+        self._silence_frames = 0
+        self._pre_roll.clear()
+        self._reset_reply_wait()
+        if self._timeout_task is not None:
+            self._timeout_task.cancel()
+            self._timeout_task = None
+
+    async def _playback_end(self, reason: str) -> None:
+        self._playing = False
+        if self._interrupted or reason not in PLAYBACK_REASONS:
+            reason = "interrupted" if self._interrupted else "error"
+        await self._emit({"type": "playback.stopped", "reason": reason})
+
+    async def _play_pcm(self, pcm: bytes, rate: int, duration: float | None = None) -> str:
+        """Write PCM to aplay at realtime pace; returns a playback reason."""
         if not pcm or self._aplay is None or self._aplay.stdin is None:
-            return
-        if rate and rate != SAMPLE_RATE:
-            pcm = await asyncio.to_thread(self._resample, pcm, rate, SAMPLE_RATE)
-        total = len(pcm) / 2 / SAMPLE_RATE
+            return "error"
+        target = self.config.sample_rate
+        if rate and rate != target:
+            pcm = await asyncio.to_thread(self._resample, pcm, rate, target)
+        total = len(pcm) / 2 / target
         if duration:
-            total = min(total, duration)
+            total = min(total, max(0.0, duration))
         deadline = time.monotonic() + total
         offset = 0
-        while offset < len(pcm) and self._active and time.monotonic() < deadline:
-            chunk = pcm[offset : offset + FRAME_BYTES]
+        while offset < len(pcm):
+            if not self._active:
+                return "interrupted"
+            if time.monotonic() >= deadline:
+                break
+            chunk = pcm[offset : offset + self._frame_bytes]
             offset += len(chunk)
             try:
                 self._aplay.stdin.write(chunk)
                 await self._aplay.stdin.drain()
             except (ConnectionResetError, BrokenPipeError):
-                return
+                return "error"
             self._frames_out += 1
-            await asyncio.sleep(FRAME_SECONDS)
+            await asyncio.sleep(self._frame_seconds)
         log.info("звонок: ответ проигран в линию (%.1f c)", total)
+        return "finished"
 
     def _download(self, url: str) -> bytes:
-        request = urllib.request.Request(url, headers={"User-Agent": "sim7600-gateway/1.0"})
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("audio.url must be http(s)")
+        if self._http_host and parsed.hostname and parsed.hostname != self._http_host:
+            raise ValueError("audio.url host is not the Athena core")
+        request = urllib.request.Request(url, headers={"User-Agent": "sim7600-gateway/1.1"})
         with urllib.request.urlopen(request, timeout=20) as response:
             data = response.read(MAX_DOWNLOAD_BYTES + 1)
         if len(data) > MAX_DOWNLOAD_BYTES:
@@ -486,8 +634,11 @@ class CallVoiceSession:
             method="POST",
         )
         with urllib.request.urlopen(request, timeout=30) as response:
-            rate = int(response.headers.get("X-Sample-Rate") or SAMPLE_RATE)
-            return response.read(), rate
+            rate = _safe_int(response.headers.get("X-Sample-Rate"), self.config.sample_rate)
+            data = response.read(MAX_DOWNLOAD_BYTES + 1)
+        if len(data) > MAX_DOWNLOAD_BYTES:
+            raise ValueError("TTS response is too large")
+        return data, rate or self.config.sample_rate
 
     @staticmethod
     def _resample(pcm: bytes, source_rate: int, target_rate: int) -> bytes:
@@ -496,7 +647,7 @@ class CallVoiceSession:
         try:
             import audioop  # noqa: PLC0415 - stdlib, removed in Python 3.13
         except ImportError:
-            return pcm
+            return _linear_resample(pcm, source_rate, target_rate)
         converted, _ = audioop.ratecv(pcm, 2, 1, source_rate, target_rate, None)
         return converted
 
@@ -512,11 +663,43 @@ class CallVoiceSession:
                 self._last_error = text
                 log.debug("%s: %s", name, text)
 
+    def _notify_stopped(self, reason: str) -> None:
+        if self._on_stopped is None:
+            return
+        try:
+            result = self._on_stopped(reason)
+            if asyncio.iscoroutine(result):
+                asyncio.create_task(result)
+        except Exception:  # pragma: no cover - defensive
+            log.exception("обработчик остановки голосового цикла упал")
+
     async def _emit(self, frame: dict[str, Any]) -> None:
         try:
             await self._send_json(frame)
         except Exception as exc:
             log.debug("кадр %s не отправлен: %s", frame.get("type"), exc)
+
+
+def _linear_resample(pcm: bytes, source_rate: int, target_rate: int) -> bytes:
+    """Small fallback for Python 3.13, where stdlib ``audioop`` was removed."""
+    import array  # noqa: PLC0415
+
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) // 2 * 2])
+    if not samples:
+        return b""
+    count = max(1, round(len(samples) * target_rate / source_rate))
+    step = source_rate / target_rate
+    out = array.array("h")
+    last = len(samples) - 1
+    for index in range(count):
+        position = index * step
+        left = min(last, int(position))
+        right = min(last, left + 1)
+        fraction = position - left
+        value = samples[left] + (samples[right] - samples[left]) * fraction
+        out.append(max(-32768, min(32767, int(value))))
+    return out.tobytes()
 
 
 def rms(frame: bytes) -> float:

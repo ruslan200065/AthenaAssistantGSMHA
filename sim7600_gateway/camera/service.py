@@ -29,6 +29,7 @@ class CameraService:
         self._camera: FfmpegCamera | None = None
         self._latest: bytes | None = None
         self._last_frame_at: float | None = None
+        self._frame_seq = 0
         self._frame_event = asyncio.Event()
         self._subscribers = 0
         self._motion_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1)
@@ -64,6 +65,7 @@ class CameraService:
     def _on_frame(self, frame: bytes) -> None:
         self._latest = frame
         self._last_frame_at = time.time()
+        self._frame_seq += 1
         self._frame_event.set()
         if self.config.motion_detection and self._motion_queue.full():
             with contextlib.suppress(asyncio.QueueEmpty):
@@ -73,14 +75,23 @@ class CameraService:
                 self._motion_queue.put_nowait(frame)
 
     async def latest_frame(self, timeout: float = 3.0) -> bytes | None:
-        self._frame_event.clear()
         if self._latest is not None and time.time() - (self._last_frame_at or 0) < 2:
             return self._latest
+        frame, _seq = await self._next_frame(self._frame_seq, timeout)
+        return frame
+
+    async def _next_frame(self, last_seq: int, timeout: float) -> tuple[bytes | None, int]:
+        """Wait for a frame newer than ``last_seq`` without busy-looping."""
+        if self._frame_seq != last_seq:
+            return self._latest, self._frame_seq
+        self._frame_event.clear()
+        if self._frame_seq != last_seq:
+            return self._latest, self._frame_seq
         try:
             await asyncio.wait_for(self._frame_event.wait(), timeout)
         except TimeoutError:
-            return None
-        return self._latest
+            return None, last_seq
+        return self._latest, self._frame_seq
 
     async def snapshot(self) -> tuple[bytes | None, str]:
         frame = await self.latest_frame()
@@ -134,15 +145,15 @@ class CameraService:
         self._subscribers += 1
         try:
             yield b""
-            last: bytes | None = None
+            last_seq = -1
             while True:
-                frame = await self.latest_frame(timeout=5)
+                frame, seq = await self._next_frame(last_seq, 5)
                 if frame is None:
                     yield b"\r\n"
                     continue
-                if frame is last:
+                if seq == last_seq:
                     continue
-                last = frame
+                last_seq = seq
                 header = (
                     f"--{BOUNDARY}\r\n"
                     "Content-Type: image/jpeg\r\n"
@@ -161,16 +172,17 @@ class CameraService:
                 self._previous_frame = frame
                 continue
             try:
-                changed = await asyncio.to_thread(
-                    frame_difference, self._previous_frame, frame
-                )
+                changed = await asyncio.to_thread(frame_difference, self._previous_frame, frame)
             except Exception as exc:  # Pillow missing/invalid frame
                 log.debug("motion detection: %s", exc)
                 self._previous_frame = frame
                 continue
             self._previous_frame = frame
             now = time.time()
-            if changed >= self.config.motion_threshold and now - self._last_motion_at >= self.config.motion_cooldown:
+            if (
+                changed >= self.config.motion_threshold
+                and now - self._last_motion_at >= self.config.motion_cooldown
+            ):
                 self._last_motion_at = now
                 self._motion_events += 1
                 await self._emit(
@@ -185,18 +197,23 @@ class CameraService:
     # ── info ─────────────────────────────────────────────────────────────────
 
     def info(self) -> dict[str, Any]:
-        camera_info = self._camera.info.to_dict() if self._camera else {
-            "device": self.config.device,
-            "mock": self.config.mock,
-            "width": self.config.width,
-            "height": self.config.height,
-            "fps": self.config.fps,
-            "available": False,
-        }
+        camera_info = (
+            self._camera.info.to_dict()
+            if self._camera
+            else {
+                "device": self.config.device,
+                "mock": self.config.mock,
+                "width": self.config.width,
+                "height": self.config.height,
+                "fps": self.config.fps,
+                "available": False,
+            }
+        )
         return {
             **camera_info,
             "enabled": self.config.enabled,
             "frames": self._camera.frames if self._camera else 0,
+            "frame_seq": self._frame_seq,
             "last_frame_at": self._last_frame_at,
             "subscribers": self._subscribers,
             "motion_detection": self.config.motion_detection,

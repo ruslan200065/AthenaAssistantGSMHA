@@ -197,10 +197,24 @@ def _submit_pdu(
 
 
 def _split_septets(septets: list[int]) -> list[list[int]]:
-    return [
-        septets[i : i + GSM7_PART_LIMIT]
-        for i in range(0, len(septets), GSM7_PART_LIMIT)
-    ]
+    """Split into UDH-sized chunks without cutting a 0x1B escape pair.
+
+    ``€ { } [ ] ~ | ^ \\`` occupy two septets (``0x1B`` + code). A naive
+    slice at 153 can put the escape marker at the end of one part and the
+    code in the next, which loses/corrupts the character on the receiving
+    side.
+    """
+    chunks: list[list[int]] = []
+    start = 0
+    while start < len(septets):
+        end = min(start + GSM7_PART_LIMIT, len(septets))
+        if end < len(septets) and septets[end - 1] == 0x1B:
+            end -= 1
+        if end <= start:  # pragma: no cover - only for malformed input
+            end = start + 1
+        chunks.append(septets[start:end])
+        start = end
+    return chunks
 
 
 def _split_ucs2(text: str) -> list[str]:
@@ -366,6 +380,7 @@ def build_deliver(
 
 
 # ── decoding ──────────────────────────────────────────────────────────────────
+
 
 def _decode_numeric(toa: int, data: bytes, digits_len: int) -> str:
     nibbles: list[str] = []

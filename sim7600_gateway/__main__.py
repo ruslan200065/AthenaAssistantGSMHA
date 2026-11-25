@@ -59,6 +59,16 @@ def main(argv: list[str] | None = None) -> int:
     for warning in warnings:
         log.warning("конфигурация: %s", warning)
 
+    insecure_token = not config.bridge.api_token or config.bridge.api_token == "change-me-please"
+    loopback = config.bridge.host in ("127.0.0.1", "localhost", "::1")
+    if insecure_token and not loopback:
+        log.error(
+            "отказ запуска: bridge.api_token не задан, а bridge.host=%s. "
+            "Задайте токен или слушайте 127.0.0.1",
+            config.bridge.host,
+        )
+        return 2
+
     log.info("Athena SIM7600 Gateway v%s", __version__)
     log.info("HTTP: http://%s:%s", config.bridge.host, config.bridge.port)
     log.info(

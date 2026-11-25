@@ -38,7 +38,7 @@ def _build(cls: type, data: dict[str, Any] | None):
 @dataclass
 class BridgeConfig:
     name: str = "GSM-шлюз SIM7600"
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8099
     api_token: str = ""
     log_level: str = "INFO"
@@ -55,7 +55,6 @@ class AthenaConfig:
     room_hint: str = ""
     heartbeat_seconds: int = 20
     verify_tls: bool = True
-    event_retry: bool = True
 
 
 @dataclass
@@ -81,11 +80,14 @@ class ModemConfig:
 @dataclass
 class AudioBridgeConfig:
     enabled: bool = False
-    capture_device: str = "plughw:1,0"
-    playback_device: str = "plughw:1,0"
+    capture_device: str = "auto"
+    playback_device: str = "auto"
     sample_rate: int = 16000
     chunk_ms: int = 20
-    hold_before_bridge: bool = True
+    # Experimental: AT+CHLD=2 holds the active call while the PCM bridge is
+    # being set up. Disabled by default because some SIM7600 firmwares stop
+    # routing call audio to USB while the line is held.
+    hold_before_bridge: bool = False
 
 
 @dataclass
@@ -178,9 +180,7 @@ def apply_env(cfg: Config) -> Config:
     cfg.athena.token = _env_str("ATHENA_TOKEN", cfg.athena.token)
     cfg.athena.room_hint = _env_str("ATHENA_ROOM_HINT", cfg.athena.room_hint)
     cfg.athena.device_id = _env_str("ATHENA_DEVICE_ID", cfg.athena.device_id)
-    cfg.athena.heartbeat_seconds = _env_int(
-        "ATHENA_HEARTBEAT", cfg.athena.heartbeat_seconds
-    )
+    cfg.athena.heartbeat_seconds = _env_int("ATHENA_HEARTBEAT", cfg.athena.heartbeat_seconds)
 
     cfg.modem.enabled = _env_bool("MODEM_ENABLED", cfg.modem.enabled)
     cfg.modem.port = _env_str("MODEM_PORT", cfg.modem.port)
@@ -193,9 +193,7 @@ def apply_env(cfg: Config) -> Config:
     cfg.camera.width = _env_int("CAMERA_WIDTH", cfg.camera.width)
     cfg.camera.height = _env_int("CAMERA_HEIGHT", cfg.camera.height)
     cfg.camera.fps = _env_int("CAMERA_FPS", cfg.camera.fps)
-    cfg.camera.motion_detection = _env_bool(
-        "CAMERA_MOTION", cfg.camera.motion_detection
-    )
+    cfg.camera.motion_detection = _env_bool("CAMERA_MOTION", cfg.camera.motion_detection)
     cfg.camera.snapshot_dir = _env_str("CAMERA_SNAPSHOT_DIR", cfg.camera.snapshot_dir)
 
     cfg.audio_bridge.enabled = _env_bool("AUDIO_BRIDGE_ENABLED", cfg.audio_bridge.enabled)
@@ -242,8 +240,19 @@ def validate(cfg: Config) -> list[str]:
             warnings.append("athena.token still contains the example placeholder")
     if not cfg.bridge.api_token or cfg.bridge.api_token == "change-me-please":
         warnings.append("bridge.api_token is not configured — REST API is unprotected")
+    if cfg.bridge.host not in ("127.0.0.1", "localhost", "::1"):
+        warnings.append(
+            "bridge.host is not loopback — the API must be protected by a strong api_token"
+        )
     if cfg.modem.unknown_callers not in ("allow", "notify", "reject"):
         warnings.append("modem.unknown_callers must be allow|notify|reject")
+    if cfg.modem.sms_storage.upper() not in ("ME", "SM", "MT"):
+        warnings.append("modem.sms_storage must be ME|SM|MT")
+    if cfg.audio_bridge.enabled:
+        if not 8000 <= cfg.audio_bridge.sample_rate <= 48000:
+            warnings.append("audio_bridge.sample_rate must be between 8000 and 48000")
+        if not 5 <= cfg.audio_bridge.chunk_ms <= 100:
+            warnings.append("audio_bridge.chunk_ms must be between 5 and 100")
     if cfg.camera.input_format not in ("auto", "mjpg", "yuyv", "h264"):
         warnings.append("camera.input_format must be auto|mjpg|yuyv|h264")
     return warnings

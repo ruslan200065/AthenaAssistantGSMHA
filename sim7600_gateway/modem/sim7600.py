@@ -14,7 +14,8 @@ from ..log import get_logger
 from ..util import mask_numbers, normalize_number, now_iso, percent_from_dbm
 from .at_channel import AtChannel, AtResult, Urc
 from .errors import ModemNotConnected, ModemTimeout, SmsError
-from .pdu import SmsEncodingError, build_submit, parse_deliver
+from .pdu import DeliverSms, SmsEncodingError, build_submit, parse_deliver
+from .sms_assembler import SmsAssembler
 from .state import ACT_CODES, REGISTERED_STATES, REGISTRATION_STATES, ModemSnapshot, ModemState
 from .transport import BaseTransport
 
@@ -32,22 +33,20 @@ def _quoted(line: str) -> list[str]:
 
 
 def decode_ussd(text: str | None, dcs: int | None = None) -> str:
-    """Decode a +CUSD payload (GSM-7 text or hex-encoded UCS-2)."""
+    """Decode a +CUSD payload (GSM-7 text or hex-encoded UCS-2).
+
+    UCS-2 is decoded only when the network explicitly says so (DCS 72) or
+    when the 8-bit alphabet is requested (DCS 68). Guessing from a hex-looking
+    string produced false positives for plain USSD menus.
+    """
     if not text:
         return ""
-    if dcs == 72 or dcs == 0x48:
+    if dcs in (72, 0x48):
         try:
             return bytes.fromhex(text).decode("utf-16-be", errors="replace")
         except ValueError:
             return text
-    if len(text) % 4 == 0 and _HEX.match(text):
-        try:
-            candidate = bytes.fromhex(text).decode("utf-16-be")
-            if candidate and all(ch.isprintable() or ch.isspace() for ch in candidate):
-                return candidate
-        except (ValueError, UnicodeDecodeError):
-            pass
-    if dcs in (68, 0x44) and len(text) % 2 == 0 and _HEX.match(text):
+    if dcs in (68, 0x44) and len(text) % 2 == 0:
         try:
             return bytes.fromhex(text).decode("latin-1")
         except ValueError:
@@ -84,12 +83,14 @@ class Sim7600:
         self._active_emitted = False
         self._call_number: str | None = None
         self._call_started_at: float | None = None
+        self._answered_at: float | None = None
         self._ring_started_at: float | None = None
         self._call_present = False
 
         self._ussd_future: asyncio.Future | None = None
         self._ussd_code: str | None = None
         self._operator_checked_at: float = 0.0
+        self._sms_assembler = SmsAssembler()
         self._allowed = {normalize_number(item) or item for item in config.allowed_numbers}
         self._rejected = {normalize_number(item) or item for item in config.reject_numbers}
 
@@ -114,22 +115,37 @@ class Sim7600:
         return self._channel
 
     async def start(self) -> None:
-        if self._channel is not None:
+        if self._channel is not None and self._channel.connected:
             return
+        if self._channel is not None:
+            with contextlib.suppress(Exception):
+                await self._channel.close()
+            self._channel = None
         self._stopped = False
-        self._tasks = [
-            asyncio.create_task(self._urc_worker(), name="modem-urc"),
-            asyncio.create_task(self._status_loop(), name="modem-status"),
-        ]
+        if not self._tasks:
+            self._tasks = [
+                asyncio.create_task(self._urc_worker(), name="modem-urc"),
+                asyncio.create_task(self._status_loop(), name="modem-status"),
+            ]
         await self._open_channel()
 
     async def _open_channel(self) -> None:
         transport = self._transport or self._build_transport()
         channel = AtChannel(transport, on_urc=self._urgent.put_nowait)
-        self._channel = channel
         self._status.state = ModemState.INIT
-        await channel.open()
-        await self._initialize()
+        self._status.last_error = None
+        try:
+            await channel.open()
+            self._channel = channel
+            await self._initialize()
+        except Exception as exc:
+            if self._channel is channel:
+                self._channel = None
+            with contextlib.suppress(Exception):
+                await channel.close()
+            self._status.state = ModemState.OFF
+            self._status.last_error = str(exc)
+            raise
 
     def _build_transport(self) -> BaseTransport:
         from .transport import SerialTransport
@@ -144,11 +160,16 @@ class Sim7600:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._tasks.clear()
-        if self._ring_task is not None:
-            self._ring_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._ring_task
-            self._ring_task = None
+        for timer in (self._ring_task, self._watchdog_task):
+            if timer is not None:
+                timer.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await timer
+        self._ring_task = None
+        self._watchdog_task = None
+        while not self._urgent.empty():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._urgent.get_nowait()
         if self._channel is not None:
             await self._channel.close()
             self._channel = None
@@ -157,9 +178,12 @@ class Sim7600:
     async def _initialize(self) -> None:
         channel = self._require_channel()
         failures = 0
+        storage = (self.config.sms_storage or "ME").upper()
         for command in self.config.init_sequence:
             if not command.strip():
                 continue
+            if command.upper().startswith("AT+CPMS="):
+                command = f'AT+CPMS="{storage}","{storage}","{storage}"'
             result = await channel.command(command, timeout=5)
             if not result.ok:
                 failures += 1
@@ -185,6 +209,7 @@ class Sim7600:
                 return
             log.warning("перезапуск модема: %s", reason)
             self._status.last_error = reason
+            await self._clear_call_state("recover")
             channel = self._channel
             if channel is not None and self.config.reset_method == "at":
                 with contextlib.suppress(Exception):
@@ -209,6 +234,32 @@ class Sim7600:
                     await asyncio.sleep(min(30, attempt * 5))
             self._status.state = ModemState.OFF
             self._status.last_error = "recovery failed"
+
+    async def _clear_call_state(self, reason: str) -> None:
+        """Forget call/URC state after a modem reset or channel failure."""
+        if self._ring_task is not None:
+            self._ring_task.cancel()
+            self._ring_task = None
+        if self._watchdog_task is not None and self._watchdog_task is not asyncio.current_task():
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
+        while not self._urgent.empty():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._urgent.get_nowait()
+        self._ringing = False
+        self._active = False
+        self._incoming = False
+        self._incoming_emitted = False
+        self._active_emitted = False
+        self._call_present = False
+        self._call_number = None
+        self._call_started_at = None
+        self._answered_at = None
+        self._ring_started_at = None
+        self._status.caller = None
+        self._status.ringing = False
+        self._status.call_active = False
+        log.info("состояние звонка сброшено (%s)", reason)
 
     def _gpio_reset(self) -> None:
         pin = self.config.reset_gpio
@@ -306,7 +357,10 @@ class Sim7600:
                     sysmode = value.split(":", 1)[1].split(",")[0].strip()
                     self._status.network = sysmode or None
 
-        if self._channel is not None and self._channel.consecutive_timeouts >= self.config.watchdog_timeouts:
+        if (
+            self._channel is not None
+            and self._channel.consecutive_timeouts >= self.config.watchdog_timeouts
+        ):
             await self.recover("AT watchdog: несколько таймаутов подряд")
             return
 
@@ -317,9 +371,7 @@ class Sim7600:
         elif self._active:
             self._status.state = ModemState.ACTIVE
         elif self._status.state == ModemState.IDLE:
-            self._status.state = (
-                ModemState.SIM_READY if self._status.sim_ready else ModemState.INIT
-            )
+            self._status.state = ModemState.SIM_READY if self._status.sim_ready else ModemState.INIT
 
     async def _query_registration(self, command: str, prefix: str) -> int | None:
         channel = self._require_channel()
@@ -389,6 +441,8 @@ class Sim7600:
         self._call_number = normalized
         self._incoming = False
         self._call_present = True
+        self._answered_at = None
+        self._status.caller = None
         self._status.state = ModemState.DIALING
         self._start_call_watchdog()
         result = await channel.command(f"ATD{normalized};", timeout=20)
@@ -406,6 +460,8 @@ class Sim7600:
         result = await channel.command("ATA", timeout=15)
         if result.ok:
             await self._mark_active()
+        elif result.final == "NO CARRIER":
+            await self._finish_call("missed", answered=False)
         return result
 
     async def hangup(self) -> AtResult:
@@ -429,6 +485,63 @@ class Sim7600:
                 break
         return last
 
+    async def enable_pcm_audio(self) -> bool:
+        """Route call audio to the USB interface (16 kHz) for voice/bridge."""
+        channel = self._channel
+        if channel is None or not channel.connected:
+            return False
+        # CPCMFRM selects 16-bit linear PCM at 16 kHz. Some firmware revisions
+        # do not know it; the CPCMREG result is authoritative.
+        with contextlib.suppress(Exception):
+            result = await channel.command("AT+CPCMFRM=1", timeout=5)
+            if not result.ok:
+                log.debug("AT+CPCMFRM=1 → %s (продолжаю)", result.error)
+        try:
+            result = await channel.command("AT+CPCMREG=1", timeout=5)
+        except ModemNotConnected:
+            return False
+        if not result.ok:
+            log.warning("AT+CPCMREG=1 → %s", result.error)
+            return False
+        with contextlib.suppress(Exception):
+            await channel.command("AT+CPCMFRM?", timeout=5)
+        return True
+
+    async def disable_pcm_audio(self) -> bool:
+        """Disable the PCM route; ``CPCMREG=0,1`` is the graceful form."""
+        channel = self._channel
+        if channel is None or not channel.connected:
+            return False
+        try:
+            result = await channel.command("AT+CPCMREG=0,1", timeout=5)
+            if not result.ok:
+                result = await channel.command("AT+CPCMREG=0", timeout=5)
+        except ModemNotConnected:
+            return False
+        if not result.ok:
+            log.warning("AT+CPCMREG=0 → %s", result.error)
+            return False
+        return True
+
+    async def hold_call(self) -> bool:
+        """Experimental: hold the active call (paired with release_held_calls)."""
+        channel = self._channel
+        if channel is None or not channel.connected:
+            return False
+        with contextlib.suppress(Exception):
+            result = await channel.command("AT+CHLD=2", timeout=5)
+            return result.ok
+        return False
+
+    async def release_held_calls(self) -> bool:
+        channel = self._channel
+        if channel is None or not channel.connected:
+            return False
+        with contextlib.suppress(Exception):
+            result = await channel.command("AT+CHLD=0", timeout=5)
+            return result.ok
+        return False
+
     async def _mark_active(self) -> None:
         if self._active:
             return
@@ -438,8 +551,9 @@ class Sim7600:
         self._status.call_active = True
         self._status.ringing = False
         self._status.state = ModemState.ACTIVE
+        self._answered_at = time.time()
         if self._call_started_at is None:
-            self._call_started_at = time.time()
+            self._call_started_at = self._answered_at
         if self._status.caller:
             self._call_number = self._status.caller
         if not self._active_emitted:
@@ -453,15 +567,19 @@ class Sim7600:
                 },
             )
 
-    async def _finish_call(self, state: str, answered: bool) -> None:
+    async def _finish_call(self, state: str, answered: bool, duration: int | None = None) -> None:
         if not self._call_present:
             return
         self._call_present = False
-        duration = 0
-        if answered and self._call_started_at:
-            duration = max(0, int(time.time() - self._call_started_at))
+        incoming = self._incoming
+        if answered:
+            if duration is None:
+                base = self._answered_at or self._call_started_at
+                duration = max(0, int(time.time() - base)) if base else 0
+        else:
+            duration = 0
         number = self._call_number or self._status.caller or ""
-        should_notify = (not self._incoming) or self._incoming_emitted
+        should_notify = (not incoming) or self._incoming_emitted
         self._ringing = False
         self._active = False
         self._status.call_active = False
@@ -470,18 +588,24 @@ class Sim7600:
         self._status.call_started_at = None
         self._status.state = ModemState.IDLE if self._status.registered else ModemState.SIM_READY
         self._call_started_at = None
+        self._answered_at = None
+        self._call_number = None
         self._active_emitted = False
         self._incoming_emitted = False
         self._incoming = False
         if self._ring_task is not None:
             self._ring_task.cancel()
             self._ring_task = None
-        if number:
-            if should_notify:
-                await self._emit(
-                    "call.state",
-                    {"state": state, "number": number, "duration_sec": duration},
-                )
+        if should_notify:
+            await self._emit(
+                "call.state",
+                {
+                    "state": state,
+                    "number": number,
+                    "duration_sec": duration,
+                    "direction": "in" if incoming else "out",
+                },
+            )
 
     # ── SMS ──────────────────────────────────────────────────────────────────
 
@@ -526,6 +650,7 @@ class Sim7600:
             raise
         if not result.ok:
             self._ussd_future = None
+            self._ussd_code = None
             self._status.state = ModemState.IDLE
             return {"ok": False, "error": result.error}
         try:
@@ -570,16 +695,42 @@ class Sim7600:
         except (ValueError, UnicodeDecodeError) as exc:
             log.warning("не удалось разобрать SMS: %s", exc)
             return False
-        sender = normalize_number(message.sender) or message.sender
-        log.info("SMS от %s (%d символов)", mask_numbers(sender), len(message.text))
+        await self._deliver_sms(message, index)
+        return True
+
+    async def _deliver_sms(self, message: DeliverSms, index: int | None = None) -> None:
+        """Assemble UDH segments and emit one event when the SMS is complete."""
+        assembled = self._sms_assembler.add(message, index)
+        expired = self._sms_assembler.purge_expired()
+        if expired:
+            await self._delete_sms(expired)
+        if assembled is None:
+            concat = message.concat or (0, 1, 1)
+            log.debug(
+                "SMS: получена часть %s/%s ref=%s, жду остальные", concat[2], concat[1], concat[0]
+            )
+            return
+        sender = normalize_number(assembled.sender) or assembled.sender
+        log.info("SMS от %s (%d символов)", mask_numbers(sender), len(assembled.text))
         self._status.sms_received += 1
         await self._emit(
             "sms.incoming",
-            {"number": sender, "text": message.text, "at": message.timestamp or now_iso()},
+            {
+                "number": sender,
+                "text": assembled.text,
+                "at": assembled.timestamp or now_iso(),
+            },
         )
-        with contextlib.suppress(Exception):
-            await channel.command(f"AT+CMGD={index}", timeout=5)
-        return True
+        if assembled.indices:
+            await self._delete_sms(assembled.indices)
+
+    async def _delete_sms(self, indices: list[int]) -> None:
+        channel = self._channel
+        if channel is None:
+            return
+        for index in indices:
+            with contextlib.suppress(Exception):
+                await channel.command(f"AT+CMGD={index}", timeout=5)
 
     # ── URC handling ─────────────────────────────────────────────────────────
 
@@ -609,11 +760,18 @@ class Sim7600:
             elif self._ringing:
                 await self._finish_call("missed", answered=False)
         elif name == "VOICE CALL":
-            if "BEGIN" in urc.line.upper():
+            upper = urc.line.upper()
+            if "BEGIN" in upper:
                 await self._mark_active()
-            elif "END" in urc.line.upper():
+            elif "END" in upper:
+                match = re.search(r"END[:\s]+(\d+)", urc.line, re.IGNORECASE)
+                urc_duration = int(match.group(1)) if match else None
                 state = "ended" if self._active else "missed"
-                await self._finish_call(state, answered=self._active)
+                await self._finish_call(
+                    state,
+                    answered=self._active,
+                    duration=urc_duration if self._active else None,
+                )
         elif name == "+CMTI":
             numbers = re.findall(r"(\d+)", urc.line.split(":", 1)[-1])
             if numbers:
@@ -646,6 +804,9 @@ class Sim7600:
             self._incoming_emitted = False
             self._active_emitted = False
             self._ring_started_at = time.time()
+            self._call_number = None
+            self._call_started_at = None
+            self._answered_at = None
             self._status.ringing = True
             self._status.state = ModemState.RINGING
             self._status.caller = None
@@ -659,9 +820,7 @@ class Sim7600:
 
     def _start_call_watchdog(self) -> None:
         if self._watchdog_task is None or self._watchdog_task.done():
-            self._watchdog_task = asyncio.create_task(
-                self._call_watchdog(), name="call-watchdog"
-            )
+            self._watchdog_task = asyncio.create_task(self._call_watchdog(), name="call-watchdog")
 
     async def _call_watchdog(self) -> None:
         """Reconcile call state with AT+CLCC.
@@ -720,6 +879,16 @@ class Sim7600:
             log.warning("входящий звонок без определившегося номера")
             if self.config.unknown_callers == "reject":
                 await self.hangup()
+                return
+            if not self._incoming_emitted:
+                self._incoming_emitted = True
+                self._call_number = None
+                self._call_started_at = time.time()
+                known = self.config.unknown_callers == "allow"
+                await self._emit(
+                    "call.incoming",
+                    {"number": "", "at": now_iso(), "known": known, "unknown": True},
+                )
             return
         if number in self._rejected:
             log.info("звонок отклонён локальной политикой: %s", mask_numbers(number))
@@ -742,12 +911,7 @@ class Sim7600:
         except (ValueError, UnicodeDecodeError) as exc:
             log.warning("не удалось разобрать входящую SMS: %s", exc)
             return
-        sender = normalize_number(message.sender) or message.sender
-        self._status.sms_received += 1
-        await self._emit(
-            "sms.incoming",
-            {"number": sender, "text": message.text, "at": message.timestamp or now_iso()},
-        )
+        await self._deliver_sms(message)
 
     async def _handle_cusd(self, line: str) -> None:
         payload = line.split(":", 1)[-1]

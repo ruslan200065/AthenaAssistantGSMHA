@@ -45,14 +45,19 @@ def main() -> int:
         deadline = time.time() + 5
         while time.time() < deadline:
             response = client.get("/api/status", headers=headers)
-            if response.status_code == 200 and response.json()["modem"]["state"] not in ("off", "init"):
+            if response.status_code == 200 and response.json()["modem"]["state"] not in (
+                "off",
+                "init",
+            ):
                 status = response.json()
                 break
             time.sleep(0.1)
         checks.append(("modem ready", status is not None))
         if status:
-            print(f"  modem: {status['modem']['model']} / {status['modem']['operator']} / "
-                  f"{status['modem']['registration_text']}")
+            print(
+                f"  modem: {status['modem']['model']} / {status['modem']['operator']} / "
+                f"{status['modem']['registration_text']}"
+            )
             checks.append(("registered", bool(status["modem"]["registered"])))
 
         sms = client.post(

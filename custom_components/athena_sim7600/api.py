@@ -110,7 +110,9 @@ class GatewayApi:
     async def reset_modem(self) -> dict[str, Any]:
         return await self._request("POST", "/api/modem/reset")
 
-    async def bridge_call(self, room: str | None = None, endpoint_id: str | None = None) -> dict[str, Any]:
+    async def bridge_call(
+        self, room: str | None = None, endpoint_id: str | None = None
+    ) -> dict[str, Any]:
         return await self._request(
             "POST",
             "/api/calls/bridge",
@@ -154,6 +156,8 @@ class GatewayApi:
                             continue
                         if isinstance(event, dict):
                             yield event
+                # Normal close (gateway restart): do not reconnect in a tight loop.
+                await asyncio.sleep(5)
             except asyncio.CancelledError:
                 raise
             except GatewayAuthError:

@@ -7,9 +7,7 @@ incoming calls, SMS and USSD. Used by ``--mock`` demos and integration tests.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import re
-from collections.abc import Sequence
 
 from ..log import get_logger
 from .pdu import build_deliver
@@ -41,6 +39,7 @@ class SimulatedModem:
 
         self._sms_index = 0
         self._sms: dict[int, str] = {}
+        self.commands: list[str] = []
         self._call: str | None = None  # ringing | active | dialing
         self._call_number: str | None = None
         self._call_started: float | None = None
@@ -99,8 +98,10 @@ class SimulatedModem:
         self._push("\r\nRING\r\n")
         self._ring_timer = asyncio.get_running_loop().call_later(3.0, self._ring)
 
-    def inject_sms(self, number: str, text: str) -> None:
-        pdu = build_deliver(number, text)
+    def inject_sms(
+        self, number: str, text: str, concat: tuple[int, int, int] | None = None
+    ) -> None:
+        pdu = build_deliver(number, text, concat=concat)
         self._sms_index += 1
         self._sms[self._sms_index] = pdu
         self._push(f'\r\n+CMTI: "ME",{self._sms_index}\r\n')
@@ -146,6 +147,7 @@ class SimulatedModem:
 
     def _handle(self, line: str) -> None:
         upper = line.upper()
+        self.commands.append(line)
         log.debug("mock << %s", upper if not upper.startswith("ATD") else "ATD***")
 
         if upper in ("AT", "ATZ", "AT&F", "ATE0", "ATE1"):
@@ -159,6 +161,16 @@ class SimulatedModem:
 
         if upper.startswith(("AT+CMEE", "AT+CMGF", "AT+CNMI", "AT+CLIP", "AT+CRC", "AT+DDET")):
             self._echo_line(line)
+            self._ok()
+            return
+        if upper.startswith("AT+CPCMREG") or upper.startswith("AT+CHLD"):
+            self._echo_line(line)
+            self._ok()
+            return
+        if upper.startswith("AT+CPCMFRM"):
+            self._echo_line(line)
+            if upper.endswith("?"):
+                self._push("\r\n+CPCMFRM: 1\r\n")
             self._ok()
             return
         if upper.startswith(("AT+CPMS=", "AT+CPMS?")):
@@ -285,9 +297,7 @@ class SimulatedModem:
                 self._ok()
                 return
             for index, pdu in sorted(self._sms.items()):
-                self._push(
-                    f'\r\n+CMGL: {index},0,,{len(pdu) // 2}\r\n{pdu}\r\n'
-                )
+                self._push(f"\r\n+CMGL: {index},0,,{len(pdu) // 2}\r\n{pdu}\r\n")
             self._ok()
             return
         if upper.startswith("AT+CFUN=1,1"):
@@ -338,14 +348,3 @@ class SimulatedModem:
         self._sms.clear()
         self._push("\r\nRDY\r\n")
         self._push("\r\n*ATREADY: 1\r\n")
-
-
-def simulate_sequence(script: Sequence[str]) -> list[bytes]:
-    """Test helper: convert newline-separated mock output into chunks."""
-    return [part.encode() for part in script if part]
-
-
-def cancel_timer(timer: asyncio.TimerHandle | None) -> None:
-    if timer is not None:
-        with contextlib.suppress(Exception):
-            timer.cancel()

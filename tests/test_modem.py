@@ -75,8 +75,7 @@ def test_ussd_reply() -> None:
             assert result["ok"]
             assert "Баланс" in result["response"]
             assert any(
-                kind == "device.event" and data["event"] == "ussd.result"
-                for kind, data in events
+                kind == "device.event" and data["event"] == "ussd.result" for kind, data in events
             )
         finally:
             await modem.stop()
@@ -102,16 +101,10 @@ def test_silent_hangup_is_reconciled_by_clcc() -> None:
             simulator.silent_hangup()
             deadline = asyncio.get_running_loop().time() + 7
             while asyncio.get_running_loop().time() < deadline:
-                if any(
-                    kind == "call.state" and data["state"] == "missed"
-                    for kind, data in events
-                ):
+                if any(kind == "call.state" and data["state"] == "missed" for kind, data in events):
                     break
                 await asyncio.sleep(0.2)
-            assert any(
-                kind == "call.state" and data["state"] == "missed"
-                for kind, data in events
-            )
+            assert any(kind == "call.state" and data["state"] == "missed" for kind, data in events)
             assert not modem.snapshot.ringing
         finally:
             await modem.stop()

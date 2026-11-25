@@ -22,12 +22,19 @@ numbers = [
     if item.strip()
 ]
 
+api_token = str(options.get("api_token") or "").strip()
+if not api_token or api_token == "change-me-please":
+    import secrets
+    api_token = secrets.token_urlsafe(24)
+    Path("/data/api_token.txt").write_text(api_token + "\n", encoding="utf-8")
+    print("Generated API token (also saved to /data/api_token.txt):", api_token)
+
 config = f"""
 [bridge]
 name = "GSM-шлюз SIM7600"
 host = "0.0.0.0"
 port = 8099
-api_token = {q(options.get("api_token") or "")}
+api_token = {q(api_token)}
 log_level = {q(options.get("log_level") or "INFO")}
 state_dir = "/data"
 allow_anonymous_camera = false
@@ -38,7 +45,7 @@ url = {q(options.get("athena_url") or "")}
 token = {q(options.get("athena_token") or "")}
 room_hint = ""
 heartbeat_seconds = 20
-verify_tls = true
+verify_tls = {flag(options.get("athena_verify_tls", True))}
 
 [modem]
 enabled = true
@@ -69,7 +76,7 @@ capture_device = {q(options.get("audio_device") or "auto")}
 playback_device = {q(options.get("audio_device") or "auto")}
 sample_rate = 16000
 chunk_ms = 20
-hold_before_bridge = true
+hold_before_bridge = false
 """
 
 Path("/data/config.toml").write_text(config, encoding="utf-8")

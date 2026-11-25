@@ -11,6 +11,7 @@ import contextlib
 import re
 import shutil
 import subprocess
+import time
 from collections.abc import Awaitable, Callable
 
 from .config import AudioBridgeConfig
@@ -19,60 +20,126 @@ from .modem.sim7600 import Sim7600
 
 log = get_logger("audio.bridge")
 
-FRAME_BYTES = 640  # 20 ms, 16 kHz, mono, s16le
+PROCESS_READY_DELAY = 0.15
+_ALSA_CACHE_TTL = 30.0
+_ALSA_CACHE: dict[str, tuple[float, str | None]] = {}
 
 _ALSA_CARD = re.compile(
     r"card\s+(\d+):\s+([^\[]*)\[([^\]]*)\].*?device\s+(\d+):\s+([^\[]*)\[([^\]]*)\]"
 )
 
 
-def detect_alsa_device(keyword: str = "SIM7600") -> str | None:
-    """Return ``plughw:<card>,<device>`` for the modem's USB audio interface."""
+def detect_alsa_device(keyword: str = "SIM7600", *, refresh: bool = False) -> str | None:
+    """Return ``plughw:<card>,<device>`` for the modem's USB audio interface.
+
+    ``auto`` must never silently pick an unrelated card (HDMI, laptop mic):
+    only a card matching the keyword (or SIMCom) is accepted, otherwise
+    ``None`` is returned and the caller reports a configuration error.
+    """
     if not shutil.which("arecord"):
         return None
+    now = time.monotonic()
+    cached = _ALSA_CACHE.get(keyword)
+    if cached is not None and not refresh and now - cached[0] < _ALSA_CACHE_TTL:
+        return cached[1]
     try:
         result = subprocess.run(
             ["arecord", "-l"], capture_output=True, text=True, timeout=5, check=False
         )
     except (OSError, subprocess.SubprocessError):
-        return None
-    fallback: str | None = None
-    for line in result.stdout.splitlines():
-        match = _ALSA_CARD.search(line)
-        if not match:
-            continue
-        card, card_id, card_name, device, _dev_id, dev_name = match.groups()
-        candidate = f"plughw:{card},{device}"
-        if fallback is None:
-            fallback = candidate
-        haystack = f"{card_id} {card_name} {dev_name}".lower()
-        if keyword.lower() in haystack:
-            return candidate
-    return fallback
+        result = None
+    found: str | None = None
+    if result is not None:
+        needle = keyword.lower()
+        for line in result.stdout.splitlines():
+            match = _ALSA_CARD.search(line)
+            if not match:
+                continue
+            card, card_id, card_name, device, _dev_id, dev_name = match.groups()
+            haystack = f"{card_id} {card_name} {dev_name}".lower()
+            if needle in haystack or "simcom" in haystack:
+                found = f"plughw:{card},{device}"
+                break
+    _ALSA_CACHE[keyword] = (now, found)
+    return found
 
 
 def resolve_alsa_device(value: str, keyword: str = "SIM7600") -> str | None:
-    if value and value.strip().lower() not in ("auto", "default"):
-        return value.strip()
-    return detect_alsa_device(keyword) or ("default" if value.strip().lower() == "default" else None)
+    """Resolve a configured ALSA device.
+
+    ``auto`` means "the SIM7600 card or nothing"; explicit values (including
+    ``default`` and ``plughw:...``) are passed through untouched.
+    """
+    raw = (value or "").strip()
+    if raw.lower() == "default":
+        return "default"
+    if raw and raw.lower() != "auto":
+        return raw
+    return detect_alsa_device(keyword)
+
+
+async def resolve_alsa_device_async(value: str, keyword: str = "SIM7600") -> str | None:
+    """Non-blocking wrapper: ``arecord -l`` must stay off the event loop."""
+    return await asyncio.to_thread(resolve_alsa_device, value, keyword)
+
+
+async def audio_devices(
+    config: AudioBridgeConfig,
+) -> tuple[bool, str | None, str | None, str | None]:
+    """Validate ALSA availability before a call is answered.
+
+    Returns ``(ok, capture, playback, error)``. The check itself does not
+    open the devices; it only verifies binaries and card resolution so the
+    gateway can refuse to answer a call it cannot serve.
+    """
+    if not config.enabled:
+        return False, None, None, "audio_bridge.enabled = false"
+    if not shutil.which("arecord") or not shutil.which("aplay"):
+        return False, None, None, "arecord/aplay not installed (alsa-utils)"
+    try:
+        capture, playback = await asyncio.gather(
+            resolve_alsa_device_async(config.capture_device),
+            resolve_alsa_device_async(config.playback_device),
+        )
+    except Exception as exc:  # pragma: no cover - subprocess/OS errors
+        return False, None, None, f"ALSA detection failed: {exc}"
+    if not capture or not playback:
+        return (
+            False,
+            capture,
+            playback,
+            "SIM7600 ALSA card not found (set capture_device/playback_device)",
+        )
+    return True, capture, playback, None
+
+
+def frame_bytes(config: AudioBridgeConfig) -> int:
+    """PCM frame size for the configured rate/chunk (even number of bytes)."""
+    value = int(config.sample_rate * 2 * config.chunk_ms / 1000)
+    return max(2, value - value % 2)
 
 
 class AudioBridge:
-
     def __init__(
         self,
         config: AudioBridgeConfig,
         modem: Sim7600,
         on_capture: Callable[[bytes], Awaitable[None] | None] | None = None,
+        on_stopped: Callable[[str], Awaitable[None] | None] | None = None,
     ):
         self.config = config
         self._modem = modem
         self._on_capture = on_capture
+        self._on_stopped = on_stopped
         self._capture: asyncio.subprocess.Process | None = None
         self._playback: asyncio.subprocess.Process | None = None
         self._tasks: list[asyncio.Task] = []
         self._write_lock = asyncio.Lock()
         self._active = False
+        self._pcm_enabled = False
+        self._held = False
+        self._capture_device: str | None = None
+        self._playback_device: str | None = None
         self._frames_in = 0
         self._frames_out = 0
         self._last_error: str | None = None
@@ -85,39 +152,38 @@ class AudioBridge:
         return {
             "enabled": self.config.enabled,
             "active": self._active,
+            "pcm_enabled": self._pcm_enabled,
             "frames_in": self._frames_in,
             "frames_out": self._frames_out,
-            "capture_device": self.config.capture_device,
-            "playback_device": self.config.playback_device,
+            "capture_device": self._capture_device or self.config.capture_device,
+            "playback_device": self._playback_device or self.config.playback_device,
+            "sample_rate": self.config.sample_rate,
+            "chunk_ms": self.config.chunk_ms,
             "last_error": self._last_error,
         }
 
-    async def start(self) -> bool:
-        if not self.config.enabled:
+    async def prepare(self) -> bool:
+        ok, capture, playback, error = await audio_devices(self.config)
+        if not ok:
+            self._last_error = error
+            log.warning("аудиомост недоступен: %s", error)
             return False
+        self._capture_device = capture
+        self._playback_device = playback
+        return True
+
+    async def start(self) -> bool:
         if self._active:
             return True
-        if not shutil.which("arecord") or not shutil.which("aplay"):
-            self._last_error = "arecord/aplay not installed"
-            log.warning("аудиомост недоступен: нет arecord/aplay")
+        if not await self.prepare():
             return False
-        channel = self._modem.channel
-        if channel is not None:
-            with contextlib.suppress(Exception):
-                result = await channel.command("AT+CPCMREG=1", timeout=5)
-                if not result.ok:
-                    log.warning("AT+CPCMREG=1 → %s", result.error)
-            if self.config.hold_before_bridge:
-                with contextlib.suppress(Exception):
-                    await channel.command("AT+CHLD=2", timeout=5)
+        assert self._capture_device is not None and self._playback_device is not None
         rate = str(self.config.sample_rate)
-        capture_device = resolve_alsa_device(self.config.capture_device) or self.config.capture_device
-        playback_device = resolve_alsa_device(self.config.playback_device) or self.config.playback_device
         capture_cmd = [
             "arecord",
             "-q",
             "-D",
-            capture_device,
+            self._capture_device,
             "-f",
             "S16_LE",
             "-r",
@@ -131,7 +197,7 @@ class AudioBridge:
             "aplay",
             "-q",
             "-D",
-            playback_device,
+            self._playback_device,
             "-f",
             "S16_LE",
             "-r",
@@ -157,38 +223,70 @@ class AudioBridge:
             log.error("не удалось запустить аудиомост: %s", exc)
             await self.stop()
             return False
+
+        # arecord/aplay report a missing/busy device asynchronously.
+        await asyncio.sleep(PROCESS_READY_DELAY)
+        if not self._processes_alive():
+            await self.stop()
+            return False
+
+        if not await self._modem.enable_pcm_audio():
+            self._last_error = "AT+CPCMREG=1 failed"
+            log.error("аудиомост: модем не включил PCM-маршрут")
+            await self.stop()
+            return False
+        self._pcm_enabled = True
+        if self.config.hold_before_bridge:
+            self._held = await self._modem.hold_call()
         self._active = True
         self._tasks = [
             asyncio.create_task(self._capture_loop(), name="audio-capture"),
-            asyncio.create_task(self._stderr_loop(self._capture), name="audio-capture-err"),
-            asyncio.create_task(self._stderr_loop(self._playback), name="audio-play-err"),
+            asyncio.create_task(
+                self._stderr_loop(self._capture, "arecord"), name="audio-capture-err"
+            ),
+            asyncio.create_task(self._stderr_loop(self._playback, "aplay"), name="audio-play-err"),
         ]
-        log.info("аудиомост запущен (%s ↔ %s)", self.config.capture_device, self.config.playback_device)
+        log.info(
+            "аудиомост запущен (%s ↔ %s, %s Гц)",
+            self._capture_device,
+            self._playback_device,
+            self.config.sample_rate,
+        )
+        return True
+
+    def _processes_alive(self) -> bool:
+        for process in (self._capture, self._playback):
+            if process is None or process.returncode is not None:
+                return False
         return True
 
     async def _capture_loop(self) -> None:
         process = self._capture
         if process is None or process.stdout is None:
             return
-        while self._active:
-            try:
-                frame = await process.stdout.readexactly(FRAME_BYTES)
-            except asyncio.IncompleteReadError:
-                break
-            except asyncio.CancelledError:
-                raise
-            self._frames_in += 1
-            if self._on_capture is not None:
+        size = frame_bytes(self.config)
+        try:
+            while self._active:
                 try:
-                    result = self._on_capture(frame)
-                    if asyncio.iscoroutine(result):
-                        await result
-                except Exception as exc:
-                    log.debug("отправка PCM не удалась: %s", exc)
-        if self._active:
-            log.warning("захват аудио остановился")
+                    frame = await process.stdout.readexactly(size)
+                except asyncio.IncompleteReadError:
+                    break
+                except asyncio.CancelledError:
+                    raise
+                self._frames_in += 1
+                if self._on_capture is not None:
+                    try:
+                        result = self._on_capture(frame)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    except Exception as exc:
+                        log.debug("отправка PCM не удалась: %s", exc)
+        finally:
+            if self._active:
+                self._active = False
+                self._notify_stopped("arecord завершился")
 
-    async def _stderr_loop(self, process: asyncio.subprocess.Process | None) -> None:
+    async def _stderr_loop(self, process: asyncio.subprocess.Process | None, name: str) -> None:
         if process is None or process.stderr is None:
             return
         while True:
@@ -198,7 +296,7 @@ class AudioBridge:
             text = line.decode("utf-8", "replace").strip()
             if text:
                 self._last_error = text
-                log.debug("alsa: %s", text)
+                log.debug("%s: %s", name, text)
 
     async def feed(self, pcm: bytes) -> None:
         """PCM from Athena Core → GSM line."""
@@ -214,6 +312,7 @@ class AudioBridge:
                 self._last_error = str(exc)
                 log.warning("воспроизведение PCM остановилось: %s", exc)
                 self._active = False
+                self._notify_stopped("aplay завершился")
 
     async def stop(self) -> None:
         was_active = self._active
@@ -232,9 +331,23 @@ class AudioBridge:
                     await asyncio.wait_for(process.wait(), timeout=2)
         self._capture = None
         self._playback = None
+        if self._held:
+            self._held = False
+            with contextlib.suppress(Exception):
+                await self._modem.release_held_calls()
+        if self._pcm_enabled:
+            self._pcm_enabled = False
+            with contextlib.suppress(Exception):
+                await self._modem.disable_pcm_audio()
         if was_active:
-            channel = self._modem.channel
-            if channel is not None:
-                with contextlib.suppress(Exception):
-                    await channel.command("AT+CPCMREG=0", timeout=5)
             log.info("аудиомост остановлен")
+
+    def _notify_stopped(self, reason: str) -> None:
+        if self._on_stopped is None:
+            return
+        try:
+            result = self._on_stopped(reason)
+            if asyncio.iscoroutine(result):
+                asyncio.create_task(result)
+        except Exception:  # pragma: no cover - defensive
+            log.exception("обработчик остановки аудиомоста упал")

@@ -86,7 +86,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: AthenaSim7600Coordinator = entry.runtime_data.coordinator
-    async_add_entities(AthenaBinarySensor(coordinator, description) for description in BINARY_SENSORS)
+    async_add_entities(
+        AthenaBinarySensor(coordinator, description) for description in BINARY_SENSORS
+    )
 
 
 class AthenaBinarySensor(AthenaSim7600Entity, BinarySensorEntity):

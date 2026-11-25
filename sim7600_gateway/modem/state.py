@@ -42,7 +42,6 @@ class ModemState:
     OFF = "off"
     INIT = "init"
     SIM_READY = "sim_ready"
-    REGISTERED = "registered"
     IDLE = "idle"
     DIALING = "dialing"
     ACTIVE = "active"

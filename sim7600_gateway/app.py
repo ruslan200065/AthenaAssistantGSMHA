@@ -99,7 +99,15 @@ def create_app(config: Config) -> FastAPI:
         header = request.headers.get("authorization") or ""
         if header.lower().startswith("bearer "):
             return header[7:].strip()
-        return request.headers.get("x-api-token") or token
+        api_token = request.headers.get("x-api-token")
+        if api_token:
+            return api_token
+        # Query tokens leak into access logs/history: allow them only for
+        # streaming endpoints (<img>, EventSource) that cannot set headers.
+        path = request.url.path
+        if path.startswith("/api/events") or path.startswith("/api/camera/"):
+            return token
+        return None
 
     async def auth(request: Request, token: str | None = Query(default=None)) -> None:
         expected = config.bridge.api_token
@@ -203,7 +211,7 @@ def create_app(config: Config) -> FastAPI:
 
     @app.post("/api/modem/reset", dependencies=[Depends(auth)])
     async def reset_modem() -> dict:
-        asyncio.create_task(bridge.modem.recover("local API request"))
+        bridge.schedule_recover("local API request")
         return {"ok": True, "scheduled": True}
 
     @app.post("/api/modem/at", dependencies=[Depends(auth)])
@@ -225,7 +233,9 @@ def create_app(config: Config) -> FastAPI:
         )
         command = body.command.strip()
         if command.upper() not in [item.upper() for item in allowed]:
-            raise HTTPException(status_code=403, detail="command is not in the diagnostic allowlist")
+            raise HTTPException(
+                status_code=403, detail="command is not in the diagnostic allowlist"
+            )
         channel = bridge.modem.channel
         if channel is None:
             raise HTTPException(status_code=503, detail="modem is not connected")
@@ -239,7 +249,9 @@ def create_app(config: Config) -> FastAPI:
     # ── events ───────────────────────────────────────────────────────────────
 
     @app.get("/api/events")
-    async def events(request: Request, token: str | None = Query(default=None)) -> StreamingResponse:
+    async def events(
+        request: Request, token: str | None = Query(default=None)
+    ) -> StreamingResponse:
         await auth(request, token)
         queue = bridge.bus.open_subscription()
 

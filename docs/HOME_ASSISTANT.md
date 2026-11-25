@@ -1,15 +1,11 @@
 # Home Assistant
 
-> Если шлюз установлен как **приложение HA (add-on)**, начните с
-> `athena_sim7600_gateway/README.md`: камера подключается встроенной
-> **Generic Camera**, HACS не нужен. Ниже — опциональная интеграция.
-
 ## Установка
 
 ### Вручную
 
 ```bash
-cp -r custom_components/athena_sim7600 /config/custom_components/
+cp -r sim7600-gateway/ha/custom_components/athena_sim7600 /config/custom_components/
 ```
 
 Перезапустите Home Assistant.
@@ -17,7 +13,9 @@ cp -r custom_components/athena_sim7600 /config/custom_components/
 ### HACS (custom repository)
 
 1. HACS → «Интеграции» → ⋮ → «Пользовательские репозитории».
-2. URL: этот репозиторий (интеграция в корне).
+2. URL: репозиторий, где `custom_components/athena_sim7600` лежит в корне.
+   В этом монорепозитории интеграция находится в `ha/`, поэтому проще указать
+   `ha/` как отдельный репозиторий либо установить вручную.
 3. Категория «Integration» → установить → перезапустить HA.
 
 ### Настройка
@@ -184,4 +182,3 @@ aspect_ratio: "16:9"
 
 Скопируйте новую версию `custom_components/athena_sim7600`, перезапустите HA.
 Опции (интервал опроса, номер SMS по умолчанию) сохраняются.
-

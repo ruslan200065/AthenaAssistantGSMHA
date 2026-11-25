@@ -33,7 +33,10 @@ def client(tmp_path):
         deadline = time.time() + 5
         while time.time() < deadline:
             response = test_client.get("/api/status", headers=HEADERS)
-            if response.status_code == 200 and response.json()["modem"]["state"] not in ("off", "init"):
+            if response.status_code == 200 and response.json()["modem"]["state"] not in (
+                "off",
+                "init",
+            ):
                 break
             time.sleep(0.1)
         yield test_client

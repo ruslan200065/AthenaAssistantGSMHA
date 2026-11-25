@@ -1,5 +1,5 @@
 ﻿name: Athena SIM7600 Gateway
-version: "1.1.0"
+version: "1.2.0"
 slug: athena_sim7600_gateway
 description: SIM7600 GSM + USB camera bridge for Athena Core and Home Assistant
 url: https://github.com/ruslan200065/AthenaAssistantGSMHA
@@ -10,7 +10,6 @@ startup: application
 boot: auto
 init: false
 host_network: true
-full_access: true
 uart: true
 usb: true
 video: true
@@ -24,6 +23,7 @@ options:
   athena_enabled: false
   athena_url: "ws://homeassistant.local:8000/api/device/ws"
   athena_token: ""
+  athena_verify_tls: true
   api_token: "change-me-please"
   modem_port: "/dev/ttyUSB2"
   modem_mock: false
@@ -40,6 +40,7 @@ schema:
   athena_enabled: bool
   athena_url: str
   athena_token: password
+  athena_verify_tls: bool
   api_token: password
   modem_port: str
   modem_mock: bool

@@ -141,12 +141,12 @@ class FfmpegCamera:
         entries = formats.get(chosen.upper()) or []
         if entries:
             fitting = [
-                entry
-                for entry in entries
-                if entry["width"] <= width and entry["height"] <= height
+                entry for entry in entries if entry["width"] <= width and entry["height"] <= height
             ]
-            best = max(fitting, key=lambda e: e["width"] * e["height"]) if fitting else min(
-                entries, key=lambda e: e["width"] * e["height"]
+            best = (
+                max(fitting, key=lambda e: e["width"] * e["height"])
+                if fitting
+                else min(entries, key=lambda e: e["width"] * e["height"])
             )
             width, height = best["width"], best["height"]
             if best.get("fps"):
@@ -225,9 +225,7 @@ class FfmpegCamera:
         self._stopped = False
         self._started_at = time.time()
         if not self.config.mock:
-            formats = await asyncio.to_thread(
-                probe_v4l2, self.config.device, self.config.v4l2ctl
-            )
+            formats = await asyncio.to_thread(probe_v4l2, self.config.device, self.config.v4l2ctl)
             self.info = self._build_info(formats)
         self._tasks = [
             asyncio.create_task(self._run(), name="camera-ffmpeg"),
@@ -344,11 +342,18 @@ class FfmpegCamera:
         seconds = max(1.0, min(120.0, seconds))
         path.parent.mkdir(parents=True, exist_ok=True)
         if self.config.mock:
-            source = ["-f", "lavfi", "-i", f"testsrc2=size={self.info.width}x{self.info.height}:rate={self.info.fps}"]
-        else:
             source = [
                 "-f",
-                "v4l2",
+                "lavfi",
+                "-i",
+                f"testsrc2=size={self.info.width}x{self.info.height}:rate={self.info.fps}",
+            ]
+        else:
+            pixel = self.info.pixel_format.lower()
+            source = ["-f", "v4l2"]
+            if pixel in ("mjpg", "h264"):
+                source += ["-input_format", pixel]
+            source += [
                 "-video_size",
                 f"{self.info.width}x{self.info.height}",
                 "-framerate",

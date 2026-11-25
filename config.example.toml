@@ -2,7 +2,9 @@
 
 [bridge]
 name = "GSM-шлюз SIM7600"
-host = "0.0.0.0"
+# 127.0.0.1 = только этот хост. Для доступа из LAN/HA укажите 0.0.0.0
+# и обязательно задайте длинный api_token.
+host = "127.0.0.1"
 port = 8099
 # Bearer token for the local REST/SSE API and the Home Assistant integration.
 api_token = "change-me-please"
@@ -19,8 +21,6 @@ device_id = "sim7600-gateway-01"
 room_hint = "Прихожая"
 heartbeat_seconds = 20
 verify_tls = true
-# Re-send a frame if the WebSocket drops before its ack (safe frames only).
-event_retry = true
 
 [modem]
 enabled = true
@@ -55,18 +55,20 @@ bridge_known_only = true
 watchdog_timeouts = 3
 reset_method = "at"            # at | gpio | none
 reset_gpio = 0                 # BCM pin when reset_method="gpio"
+sms_storage = "ME"             # ME | SM | MT — AT+CPMS storage
 
 [audio_bridge]
 # PCM bridge between the SIM7600 USB audio interface and an Athena speaker.
 # Also enables voice calls: after ATA the gateway listens to the line and plays
-# assistant replies. "auto" finds the SIM7600 card in `arecord -l`.
+# assistant replies. "auto" finds the SIM7600 card in `arecord -l`; if the card
+# is not found the gateway refuses to answer instead of using a random device.
 enabled = false
 capture_device = "auto"
 playback_device = "auto"
-sample_rate = 16000
-chunk_ms = 20
-# Hold the line before starting the bridge (AT+CHLD=2).
-hold_before_bridge = true
+sample_rate = 16000            # SIM7600 USB audio usually supports 8/16/48 kHz
+chunk_ms = 20                  # PCM frame size for VAD/bridge
+# Experimental: AT+CHLD=2 while the bridge starts (paired with AT+CHLD=0).
+hold_before_bridge = false
 
 [camera]
 enabled = true

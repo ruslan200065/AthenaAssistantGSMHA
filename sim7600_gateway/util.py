@@ -53,10 +53,6 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
-
-
 def percent_from_dbm(dbm: int) -> int:
     """Map CSQ dBm (-113..-51) to a 0..100 percentage."""
     if dbm <= -113:
@@ -72,4 +68,3 @@ _MASKABLE_NUMBER = re.compile(r"\+?\d[\d\s\-()]{4,}\d")
 def mask_numbers(text: str) -> str:
     """Replace phone-like digit sequences in a log line."""
     return _MASKABLE_NUMBER.sub("***", text)
-

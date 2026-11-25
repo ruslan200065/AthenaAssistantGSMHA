@@ -7,6 +7,7 @@ DASHBOARD_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'">
 <title>Athena GSM · SIM7600</title>
 <style>
 :root { --bg:#0b0f14; --card:#121a24; --line:#1f2c3a; --text:#e8eef6; --muted:#8aa0b6;
@@ -69,9 +70,9 @@ button.danger { border-color:#5a2a2a; color:var(--danger); }
       <h2>Камера</h2>
       <img class="stream" id="stream" alt="Камера">
       <div class="row">
-        <button class="primary" onclick="act('/api/camera/snapshot.jpg?save=true')">Снимок</button>
+        <button class="primary" onclick="act('/api/camera/snapshot.jpg?save=true', undefined, 'GET')">Снимок</button>
         <button onclick="act('/api/camera/record',{seconds:12})">Записать 12 c</button>
-        <button onclick="act('/api/modem/reset')">Сброс модема</button>
+        <button onclick="act('/api/modem/reset',{})">Сброс модема</button>
       </div>
     </div>
     <div class="card">
@@ -80,8 +81,8 @@ button.danger { border-color:#5a2a2a; color:var(--danger); }
       <div class="row">
         <input id="number" placeholder="+7 999 123-45-67" inputmode="tel">
         <button onclick="dial()">Позвонить</button>
-        <button onclick="act('/api/calls/answer')">Ответить</button>
-        <button class="danger" onclick="act('/api/calls/hangup')">Сбросить</button>
+        <button onclick="act('/api/calls/answer',{})">Ответить</button>
+        <button class="danger" onclick="act('/api/calls/hangup',{})">Сбросить</button>
       </div>
       <div class="row">
         <input id="smsText" placeholder="Текст SMS">
@@ -106,15 +107,20 @@ button.danger { border-color:#5a2a2a; color:var(--danger); }
 <script>
 const $ = (id) => document.getElementById(id);
 const BASE = window.location.pathname.replace(/\/+$/, '');
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  })[c]);
+}
 let token = localStorage.getItem('gwToken') || '';
 function headers() { return token ? {'Authorization':'Bearer '+token} : {}; }
 function toast(msg, bad) {
   const el = $('toast'); el.textContent = msg; el.style.borderColor = bad ? '#5a2a2a' : '#2a3d52';
   el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(()=>el.classList.remove('show'), 3200);
 }
-async function api(path, body) {
+async function api(path, body, method) {
   path = BASE + path;
-  const options = {method: body === undefined ? 'GET' : 'POST', headers: {...headers()}};
+  const options = {method: method || (body === undefined ? 'GET' : 'POST'), headers: {...headers()}};
   if (body !== undefined) { options.headers['Content-Type']='application/json'; options.body = JSON.stringify(body); }
   const response = await fetch(path, options);
   const text = await response.text();
@@ -122,8 +128,8 @@ async function api(path, body) {
   if (!response.ok) throw new Error((data && data.detail) || response.statusText);
   return data;
 }
-async function act(path, body) {
-  try { await api(path, body); toast('Готово'); setTimeout(refresh, 500); }
+async function act(path, body, method) {
+  try { await api(path, body, method); toast('Готово'); setTimeout(refresh, 500); }
   catch (e) { toast(e.message || 'Ошибка', true); }
 }
 async function dial() {
@@ -149,7 +155,7 @@ $('tokenBtn').onclick = () => {
   }
 };
 function tile(label, value, unit='') {
-  return `<div class="kv"><small>${label}</small><b>${value ?? '—'}${unit}</b></div>`;
+  return `<div class="kv"><small>${esc(label)}</small><b>${esc(value ?? '—')}${esc(unit)}</b></div>`;
 }
 async function refresh() {
   try {
@@ -169,8 +175,8 @@ async function refresh() {
     $('camText').textContent = c.available ? `Камера: ${c.width}×${c.height}` : 'Камера: нет кадра';
     const sms = await api('/api/sms/recent?limit=6').catch(()=>[]);
     $('smsList').innerHTML = sms.length ? sms.map(x =>
-      `<div style="padding:7px 0;border-bottom:1px dashed #1b2836"><b>${x.number || '—'}</b>
-       <span class="muted">${x.direction === 'out' ? '→' : '←'} ${x.at || ''}</span><br>${(x.text||'').slice(0,110)}</div>`
+      `<div style="padding:7px 0;border-bottom:1px dashed #1b2836"><b>${esc(x.number || '—')}</b>
+       <span class="muted">${x.direction === 'out' ? '→' : '←'} ${esc(x.at || '')}</span><br>${esc((x.text||'').slice(0,110))}</div>`
     ).join('') : '<span class="muted">Пока нет сообщений</span>';
   } catch (e) { /* keep UI quiet */ }
 }
@@ -201,7 +207,7 @@ function addLog(type, data) {
   else if (type === 'camera.snapshot') detail = 'снимок ' + (data.filename || '');
   else if (type === 'camera.motion') detail = 'движение ' + Math.round((data.changed||0)*100) + '%';
   else detail = JSON.stringify(data).slice(0,120);
-  line.innerHTML = `<span class="t">${time}</span> <b>${type}</b> — ${detail}`;
+  line.innerHTML = `<span class="t">${esc(time)}</span> <b>${esc(type)}</b> — ${esc(detail)}`;
   const log = $('log'); log.prepend(line);
   while (log.childNodes.length > 120) log.removeChild(log.lastChild);
 }

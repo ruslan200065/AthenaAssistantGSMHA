@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .. import __version__
 from ..config import AthenaConfig
 from ..log import get_logger
 from ..util import now_iso
@@ -307,7 +306,13 @@ class AthenaClient:
                 if isinstance(raw, bytes) and self._on_audio is not None:
                     await self._on_audio(raw)
                 continue
-            await self._handle_message(message)
+            try:
+                await self._handle_message(message)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # One bad frame must not tear down the whole WS session.
+                log.exception("кадр %s не обработан", message.get("type"))
 
     async def _handle_message(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
@@ -386,10 +391,7 @@ class AthenaClient:
 
     async def _send_heartbeat(self) -> None:
         snapshot = self._status_provider() if self._status_provider else {}
-        degraded = (
-            not snapshot.get("registered", False)
-            or snapshot.get("state") in ("off", "init")
-        )
+        degraded = not snapshot.get("registered", False) or snapshot.get("state") in ("off", "init")
         frame = frames.heartbeat(
             "degraded" if degraded else "online",
             snapshot.get("signal_dbm"),
@@ -448,7 +450,3 @@ class AthenaClient:
             temp.replace(self._state_path)
         except OSError as exc:
             log.warning("не удалось сохранить состояние Athena: %s", exc)
-
-
-def describe_protocol() -> dict[str, str]:
-    return {"protocol": "device-protocol/1", "gateway_version": __version__}

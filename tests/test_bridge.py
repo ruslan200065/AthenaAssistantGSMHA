@@ -64,6 +64,7 @@ def test_bridge_command_and_call_bridge(tmp_path) -> None:
         config.modem.mock = True
         config.modem.bridge_room = "Кухня"
         config.modem.allowed_numbers = ["+79991234567"]
+        config.audio_bridge.enabled = True
         config.camera.enabled = False
         config.camera.mock = True
 
@@ -87,20 +88,15 @@ def test_bridge_command_and_call_bridge(tmp_path) -> None:
             )
             await _wait_until(
                 lambda: any(
-                    item.get("type") == "command.ack" and item.get("id") == 10
-                    for item in received
+                    item.get("type") == "command.ack" and item.get("id") == 10 for item in received
                 )
             )
             ack = next(item for item in received if item.get("type") == "command.ack")
             assert ack["status"] == "done"
 
             bridge.simulator.inject_call("+79991234567")
-            await _wait_until(
-                lambda: any(item.get("type") == "call.incoming" for item in received)
-            )
-            await _wait_until(
-                lambda: any(item.get("type") == "call.bridge" for item in received)
-            )
+            await _wait_until(lambda: any(item.get("type") == "call.incoming" for item in received))
+            await _wait_until(lambda: any(item.get("type") == "call.bridge" for item in received))
             bridge_frame = next(item for item in received if item.get("type") == "call.bridge")
             assert bridge_frame["room"] == "Кухня"
             assert bridge.modem.snapshot.call_active
@@ -108,9 +104,7 @@ def test_bridge_command_and_call_bridge(tmp_path) -> None:
             await ws.send(json.dumps({"type": "intercom.ringing", "session_id": 77}))
             await asyncio.sleep(0.1)
             bridge.simulator.remote_hangup()
-            await _wait_until(
-                lambda: any(item.get("type") == "intercom.end" for item in received)
-            )
+            await _wait_until(lambda: any(item.get("type") == "intercom.end" for item in received))
             end = next(item for item in received if item.get("type") == "intercom.end")
             assert end["session_id"] == 77
         finally:

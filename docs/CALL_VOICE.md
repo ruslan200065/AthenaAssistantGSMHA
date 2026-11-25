@@ -66,7 +66,9 @@
 2. декодирует `ffmpeg` в PCM 16 кГц mono;
 3. пишет в `aplay` в темпе реального времени, не дольше `duration`;
 4. на время проигрывания глушит микрофон (half-duplex, чтобы не услышать себя);
-5. отправляет `playback.stopped {"reason":"done"}`.
+5. отправляет `playback.stopped` с `reason` из контракта:
+   `"finished"` после нормального конца, `"interrupted"` при сбросе,
+   `"error"` при сбое.
 
 Если `audio.url` нет (TTS ядра недоступен), шлюз пробует
 `POST /api/device/tts` с `X-Device-Token` и играет полученный PCM.

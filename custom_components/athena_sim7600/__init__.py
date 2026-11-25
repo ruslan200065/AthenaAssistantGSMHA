@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import TypeAlias
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -19,7 +20,7 @@ from .const import (
     PLATFORMS,
 )
 from .coordinator import AthenaSim7600Coordinator
-from .services import async_setup_services
+from .services import async_setup_services, async_unload_services
 
 
 @dataclass
@@ -29,7 +30,7 @@ class RuntimeData:
     events_task: asyncio.Task | None = None
 
 
-type AthenaConfigEntry = ConfigEntry
+AthenaConfigEntry: TypeAlias = ConfigEntry
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -38,6 +39,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AthenaConfigEntry) -> bool:
+    await async_setup_services(hass)
     data = entry.data
     api = GatewayApi(
         hass,
@@ -70,7 +72,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: AthenaConfigEntry) -> b
         except asyncio.CancelledError:
             pass
         runtime.events_task = None
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    remaining = [
+        item
+        for item in hass.config_entries.async_entries(DOMAIN)
+        if item.entry_id != entry.entry_id and getattr(item, "runtime_data", None)
+    ]
+    if unloaded and not remaining:
+        async_unload_services(hass)
+    return unloaded
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: AthenaConfigEntry) -> None:
@@ -97,7 +107,13 @@ async def _event_loop(hass: HomeAssistant, runtime: RuntimeData) -> None:
                     hass.bus.async_fire(EVENT_CALL_STATE, data)
                 elif event_type == "camera.motion":
                     hass.bus.async_fire(EVENT_MOTION, data)
-                if event_type in ("call.incoming", "call.state", "sms.incoming", "sms.sent", "modem.ready"):
+                if event_type in (
+                    "call.incoming",
+                    "call.state",
+                    "sms.incoming",
+                    "sms.sent",
+                    "modem.ready",
+                ):
                     try:
                         await coordinator.async_request_refresh()
                     except Exception:  # noqa: BLE001 - a failed poll must not drop SSE

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 from collections import deque
 from collections.abc import Callable
@@ -82,10 +83,6 @@ class AtResult:
             if line.startswith(prefix):
                 return line
         return None
-
-    @property
-    def text(self) -> str:
-        return "\n".join(self.lines)
 
 
 @dataclass
@@ -198,19 +195,40 @@ class AtChannel:
             pending = _Pending(command=command, expect_prompt=True)
             self._pending = pending
             self._trace(">>", command)
+            prompt_task = asyncio.create_task(pending.prompt.wait())
+            done_task = asyncio.create_task(pending.done.wait())
             try:
                 await self._transport.write(command.encode("ascii") + b"\r")
-                await asyncio.wait_for(pending.prompt.wait(), prompt_timeout)
-            except TimeoutError:
-                self._timeouts += 1
-                if self._pending is pending:
-                    self._pending = None
-                return AtResult(command=command, ok=False, timed_out=True, lines=pending.lines)
+                await asyncio.wait(
+                    {prompt_task, done_task},
+                    timeout=prompt_timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
             except (TransportClosed, OSError) as exc:
                 if self._pending is pending:
                     self._pending = None
                 self._fail_link(exc)
                 raise ModemNotConnected(str(exc)) from exc
+            finally:
+                for task in (prompt_task, done_task):
+                    task.cancel()
+                for task in (prompt_task, done_task):
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
+            if not pending.prompt_seen:
+                if self._pending is pending:
+                    self._pending = None
+                if pending.done.is_set():
+                    # The modem rejected CMGS before the prompt (ERROR/CMS ERROR).
+                    return AtResult(
+                        command=command,
+                        ok=False,
+                        final=pending.final,
+                        lines=pending.lines,
+                    )
+                self._timeouts += 1
+                return AtResult(command=command, ok=False, timed_out=True, lines=pending.lines)
 
             payload = pdu.encode("ascii") + b"\x1a"
             self._trace(">>", f"<PDU {tpdu_length} bytes>")
@@ -288,6 +306,12 @@ class AtChannel:
                 buffer = buffer[position + 1 :]
                 pending.prompt_seen = True
                 pending.prompt.set()
+        elif pending is None:
+            # A late prompt after a timeout must not be mistaken for the next
+            # CMGS prompt (that would send the PDU into a previous session).
+            stripped = buffer.lstrip(b" \t\r\n")
+            if stripped.startswith(b">"):
+                buffer = stripped[1:]
         return buffer
 
     def _dispatch(self, line: str) -> None:
@@ -335,7 +359,12 @@ class AtChannel:
             return True
         if line == "NO CARRIER":
             upper = command.upper()
-            return upper.startswith("ATH") or upper.startswith("AT+CHUP") or upper.startswith("ATD")
+            return (
+                upper.startswith("ATH")
+                or upper.startswith("AT+CHUP")
+                or upper.startswith("ATD")
+                or upper.startswith("ATA")
+            )
         return False
 
     @staticmethod
@@ -369,7 +398,8 @@ class AtChannel:
         log.warning("AT-транспорт недоступен: %s", exc)
 
     def _trace(self, direction: str, text: str) -> None:
-        safe = mask_numbers(text) if direction == ">>" else text
+        # Both directions: incoming +CLIP/+CUSD may contain a phone number.
+        safe = mask_numbers(text)
         if len(safe) > 200:
             safe = safe[:200] + "…"
         self.at_log.append((direction, safe))

@@ -71,10 +71,17 @@ def call_incoming(number: str, at: str, **extra: Any) -> dict[str, Any]:
     return frame
 
 
-def call_state(state: str, number: str, duration_sec: int | None = None) -> dict[str, Any]:
+def call_state(
+    state: str,
+    number: str,
+    duration_sec: int | None = None,
+    direction: str | None = None,
+) -> dict[str, Any]:
     frame: dict[str, Any] = {"type": "call.state", "state": state, "number": number}
     if duration_sec is not None:
         frame["duration_sec"] = max(0, int(duration_sec))
+    if direction in ("in", "out"):
+        frame["direction"] = direction
     return frame
 
 
