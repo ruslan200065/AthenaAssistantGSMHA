@@ -265,17 +265,13 @@ class GatewayBridge:
         if known and modem_config.auto_answer:
             # Never answer without a working audio path: the caller would hear
             # silence and the core would consider the call served.
-            if not await self._start_voice_call():
-                log.warning(
-                    "автоответ отменён: голосовой цикл недоступен (%s)",
-                    self.voice.status.get("last_error"),
-                )
+            if not await self._audio_available():
+                log.warning("автоответ отменён: аудио недоступно (%s)", self._audio_error)
                 return
             await asyncio.sleep(max(0.0, modem_config.auto_answer_delay))
-            result = await self.modem.answer()
-            if not result.ok:
-                log.warning("автоответ не удался: %s", result.error)
-                await self._stop_voice_call()
+            ok, error = await self._answer_with_voice()
+            if not ok:
+                log.warning("автоответ не удался: %s", error)
 
     async def _audio_available(self) -> bool:
         if not self.config.audio_bridge.enabled:
@@ -330,6 +326,24 @@ class GatewayBridge:
         await self.voice.stop()
         if was_active or (self._pcm_enabled and not self.audio.active):
             await self._set_pcm(False)
+
+    async def _answer_with_voice(self) -> tuple[bool, str | None]:
+        """Answer only after the audio route is known to exist.
+
+        The PCM route itself must be enabled after ATA: SIM7600 rejects
+        ``AT+CPCMREG=1`` while the call is still ringing. If voice setup fails
+        after answering, hang up so the caller does not hear silence.
+        """
+        if not await self._audio_available():
+            return False, self._audio_error
+        result = await self.modem.answer()
+        if not result.ok:
+            return False, result.error
+        if not await self._start_voice_call():
+            error = self.voice.status.get("last_error") or "voice audio setup failed"
+            await self.modem.hangup()
+            return False, error
+        return True, None
 
     async def _bridge_failed(self, error: str) -> None:
         """A call.bridge request failed after ATA: keep the call alive if possible."""
@@ -427,17 +441,19 @@ class GatewayBridge:
                             }
                         return {"status": "failed", "error": bridged.get("error")}
                     return {"status": "done", "mode": "bridge"}
-                if not await self._start_voice_call():
+                if not await self._audio_available():
                     return {
                         "status": "failed",
-                        "error": "voice audio is unavailable (serial PCM port / ALSA / audio_bridge.enabled)",
+                        "error": f"voice audio is unavailable: {self._audio_error}",
+                    }
+                ok, error = await self._answer_with_voice()
+                if not ok:
+                    return {
+                        "status": "failed",
+                        "error": f"voice audio is unavailable: {error}",
                     }
                 self._bridge_pending = False
                 self._cancel_bridge_timeout()
-                result = await self.modem.answer()
-                if not result.ok:
-                    await self._stop_voice_call()
-                    return {"status": "failed", "error": result.error}
                 return {"status": "done"}
             if action == "hangup":
                 result = await self.modem.hangup()
