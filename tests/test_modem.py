@@ -112,6 +112,33 @@ def test_silent_hangup_is_reconciled_by_clcc() -> None:
     asyncio.run(scenario())
 
 
+def test_hangup_uses_at_chup() -> None:
+    async def scenario() -> None:
+        from sim7600_gateway.modem.at_channel import AtChannel
+        from sim7600_gateway.modem.transport import FakeTransport
+
+        commands: list[str] = []
+
+        def handler(data: bytes):
+            line = data.decode("ascii", "replace").strip()
+            commands.append(line)
+            return [b"\r\nOK\r\n"]
+
+        transport = FakeTransport(handler)
+        channel = AtChannel(transport)
+        await channel.open()
+        modem = Sim7600(ModemConfig(mock=True), transport=transport)
+        modem._channel = channel
+        try:
+            result = await modem.hangup()
+            assert result.ok
+            assert commands and commands[0] == "AT+CHUP"
+        finally:
+            await channel.close()
+
+    asyncio.run(scenario())
+
+
 def test_outgoing_call() -> None:
     async def scenario() -> None:
         events: list[tuple[str, dict]] = []

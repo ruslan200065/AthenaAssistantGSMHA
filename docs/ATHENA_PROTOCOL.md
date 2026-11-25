@@ -18,7 +18,7 @@
   "type": "hello",
   "token": "dev_...",
   "kind": "gsm",
-  "firmware": "sim7600-gateway/1.2.5",
+  "firmware": "sim7600-gateway/1.2.6",
   "hardware": "SIM7600E-H",
   "capabilities": ["calls", "sms", "dtmf", "audio_in", "audio_out", "camera"],
   "device_id": "sim7600-gateway-01",
@@ -58,7 +58,7 @@
 |---|---|---|---|
 | `call` | `{action:"dial", number, call_id}` | `ATD<number>;` | `done` после принятия модемом |
 | `call` | `{action:"answer", number, call_id, mode?, bridge_room?, bridge_endpoint_id?}` | `ATA` + голосовой цикл или `call.bridge` | `done`; `failed`, если аудио недоступно |
-| `call` | `{action:"hangup", number, call_id}` | `ATH`/`AT+CHUP` | `done`, затем `call.state ended` |
+| `call` | `{action:"hangup", number, call_id}` | `AT+CHUP` (fallback `ATH`) | `done`, затем `call.state ended` |
 | `call` | `{number, reason:"reminder"/"automation", text}` | `ATD<number>;` | `done` |
 | `sms` | `{number, text<=1000, person_id?}` | PDU (GSM-7/UCS-2, concat) | `done` после `+CMGS`/OK |
 | `ussd` | `{code<=32}` | `AT+CUSD=1,"code",15` | `done` после ответа сети |

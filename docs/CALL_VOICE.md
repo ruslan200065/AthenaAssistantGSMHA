@@ -173,7 +173,7 @@ aplay ──► SIM7600 ──GSM──► Абонент
 
 ## 5. Завершение звонка
 
-При `ATH`/`NO CARRIER`/`VOICE CALL: END`:
+При `AT+CHUP`/`NO CARRIER`/`VOICE CALL: END`:
 
 - голосовая сессия останавливается, микрофон и динамик закрываются;
 - в ядро уходит `call.state {"state":"ended","number":"...","duration_sec":N}`;

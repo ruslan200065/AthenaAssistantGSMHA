@@ -117,7 +117,7 @@ stateDiagram-v2
   dialing --> active: VOICE CALL BEGIN
   idle --> ringing: RING
   ringing --> active: ATA
-  active --> idle: ATH / NO CARRIER
+  active --> idle: AT+CHUP / NO CARRIER
   ringing --> idle: missed
   idle --> sms_tx: CMGS
   idle --> ussd: CUSD

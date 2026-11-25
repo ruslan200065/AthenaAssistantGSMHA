@@ -466,9 +466,13 @@ class Sim7600:
 
     async def hangup(self) -> AtResult:
         channel = self._require_channel()
-        result = await channel.command("ATH", timeout=10)
+        result = await channel.command("AT+CHUP", timeout=10)
+        if not result.ok:
+            # Older SIM7600 firmware may not implement CHUP; ATH is the
+            # compatibility fallback, but the protocol path uses AT+CHUP.
+            result = await channel.command("ATH", timeout=10)
         if result.final == "NO CARRIER" and not result.ok:
-            # Some firmware sends NO CARRIER instead of OK for ATH.
+            # Some firmware sends NO CARRIER instead of OK for a hangup.
             result.ok = True
         if self._active or self._ringing:
             await self._finish_call("ended", answered=self._active)
