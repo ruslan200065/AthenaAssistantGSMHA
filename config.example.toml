@@ -1,0 +1,87 @@
+# Copy to config.toml and edit. Environment variables override these values.
+
+[bridge]
+name = "GSM-шлюз SIM7600"
+host = "0.0.0.0"
+port = 8099
+# Bearer token for the local REST/SSE API and the Home Assistant integration.
+api_token = "change-me-please"
+log_level = "INFO"
+state_dir = "./data"
+# Allow unauthenticated access to /api/camera/* only (e.g. for an NVR).
+allow_anonymous_camera = false
+
+[athena]
+enabled = true
+url = "ws://192.168.1.10:8000/api/device/ws"
+token = "dev_REPLACE_ME"
+device_id = "sim7600-gateway-01"
+room_hint = "Прихожая"
+heartbeat_seconds = 20
+verify_tls = true
+# Re-send a frame if the WebSocket drops before its ack (safe frames only).
+event_retry = true
+
+[modem]
+enabled = true
+port = "/dev/ttyUSB2"
+baudrate = 115200
+mock = false
+# Executed after every (re)connect. ATE0 must stay first: the parser expects no echo.
+init_sequence = [
+  "ATE0",
+  "AT+CMEE=2",
+  "AT+CMGF=0",
+  "AT+CNMI=2,1,0,0,0",
+  "AT+CLIP=1",
+  "AT+CRC=1",
+  "AT+DDET=1",
+  "AT+CPMS=\"ME\",\"ME\",\"ME\"",
+]
+
+# Local policy. Athena never decides whether to reject an unknown caller —
+# the gateway must, because the GSM line lives here.
+unknown_callers = "notify"     # allow | notify | reject
+allowed_numbers = []           # always answered / allowed, e.g. ["+79991234567"]
+reject_numbers = []
+auto_answer = false            # answer allowed callers without the core
+auto_answer_delay = 1.0        # seconds after RING
+# Ask the core to bridge the call to a speaker automatically when a known
+# person calls. Empty = disabled.
+bridge_room = ""
+bridge_known_only = true
+
+# Modem watchdog: reset the module after this many consecutive AT timeouts.
+watchdog_timeouts = 3
+reset_method = "at"            # at | gpio | none
+reset_gpio = 0                 # BCM pin when reset_method="gpio"
+
+[audio_bridge]
+# PCM bridge between the SIM7600 USB audio interface and an Athena speaker.
+# Disabled by default: it requires a USB audio device exposed by the modem.
+enabled = false
+capture_device = "plughw:1,0"
+playback_device = "plughw:1,0"
+sample_rate = 16000
+chunk_ms = 20
+# Hold the line before starting the bridge (AT+CHLD=2).
+hold_before_bridge = true
+
+[camera]
+enabled = true
+device = "/dev/video0"
+mock = false
+width = 1280
+height = 720
+fps = 15
+# mjpg | yuyv | h264 | auto. "auto" lets the driver pick the best format.
+input_format = "auto"
+ffmpeg = "ffmpeg"
+v4l2ctl = "v4l2-ctl"
+snapshot_on_ring = true
+snapshot_dir = "./data/snapshots"
+clip_on_ring = false
+clip_seconds = 12
+motion_detection = true
+motion_threshold = 0.035      # 0..1 share of changed pixels
+motion_cooldown = 30          # seconds between motion events

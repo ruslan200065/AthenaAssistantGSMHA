@@ -1,0 +1,21 @@
+services:
+  sim7600-gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: sim7600-gateway
+    restart: unless-stopped
+    network_mode: host
+    devices:
+      - /dev/ttyUSB2:/dev/ttyUSB2
+      - /dev/video0:/dev/video0
+    volumes:
+      - ./config.toml:/data/config.toml:ro
+      - ./data:/data
+    environment:
+      - TZ=Europe/Moscow
+    # The USB audio interface of the modem (optional, for call.bridge):
+    # devices:
+    #   - /dev/snd:/dev/snd
+    # group_add:
+    #   - audio

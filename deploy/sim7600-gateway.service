@@ -1,0 +1,26 @@
+[Unit]
+Description=Athena SIM7600 GSM + camera gateway
+Documentation=https://github.com/athena-home/athena
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sim7600
+Group=dialout
+SupplementaryGroups=video audio
+WorkingDirectory=/opt/sim7600-gateway
+Environment=PYTHONUNBUFFERED=1
+Environment=GATEWAY_CONFIG=/etc/sim7600-gateway/config.toml
+ExecStart=/opt/sim7600-gateway/venv/bin/python -m sim7600_gateway -c /etc/sim7600-gateway/config.toml
+Restart=always
+RestartSec=5
+StateDirectory=sim7600-gateway
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/sim7600-gateway
+
+[Install]
+WantedBy=multi-user.target

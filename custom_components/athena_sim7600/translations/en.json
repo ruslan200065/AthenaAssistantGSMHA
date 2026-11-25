@@ -1,0 +1,97 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Athena SIM7600",
+        "description": "Address of the gateway REST API and the token from config.toml (bridge.api_token).",
+        "data": {
+          "name": "Name",
+          "url": "Gateway URL",
+          "token": "API token",
+          "verify_ssl": "Verify SSL"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update token",
+        "description": "The token for {url} was rejected.",
+        "data": {
+          "token": "API token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the gateway",
+      "invalid_auth": "Invalid API token",
+      "unknown": "Unknown error"
+    },
+    "abort": {
+      "already_configured": "This gateway is already configured",
+      "reauth_successful": "Token updated"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Athena SIM7600 options",
+        "data": {
+          "scan_interval": "Poll interval, seconds",
+          "default_sms_number": "Default SMS number"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "modem_state": { "name": "Modem state" },
+      "signal_dbm": { "name": "Signal level" },
+      "signal_percent": { "name": "Signal" },
+      "operator": { "name": "Operator" },
+      "network": { "name": "Network" },
+      "registration": { "name": "Registration" },
+      "sim_state": { "name": "SIM" },
+      "model": { "name": "Model" },
+      "firmware": { "name": "Firmware" },
+      "imei": { "name": "IMEI" },
+      "iccid": { "name": "ICCID" },
+      "phone_number": { "name": "SIM number" },
+      "uptime": { "name": "Uptime" },
+      "sms_sent": { "name": "SMS sent" },
+      "sms_received": { "name": "SMS received" },
+      "last_sms": { "name": "Last SMS" },
+      "camera_state": { "name": "Camera" },
+      "athena_connection": { "name": "Athena" }
+    },
+    "binary_sensor": {
+      "online": { "name": "Gateway online" },
+      "registered": { "name": "Registered on network" },
+      "call_active": { "name": "Call active" },
+      "ringing": { "name": "Incoming call" },
+      "athena_connected": { "name": "Athena connected" },
+      "camera_online": { "name": "Camera online" },
+      "motion": { "name": "Motion" }
+    },
+    "button": {
+      "snapshot": { "name": "Take snapshot" },
+      "answer": { "name": "Answer call" },
+      "hangup": { "name": "Hang up" },
+      "reset": { "name": "Restart modem" }
+    },
+    "camera": {
+      "camera": { "name": "Camera" }
+    },
+    "notify": {
+      "sms": { "name": "SMS" }
+    }
+  },
+  "services": {
+    "send_sms": { "name": "Send SMS" },
+    "send_ussd": { "name": "Send USSD" },
+    "dial": { "name": "Dial" },
+    "answer_call": { "name": "Answer call" },
+    "hangup_call": { "name": "Hang up" },
+    "reset_modem": { "name": "Restart modem" },
+    "take_snapshot": { "name": "Take snapshot" },
+    "record_clip": { "name": "Record clip" },
+    "bridge_call": { "name": "Bridge call to speaker" }
+  }
+}

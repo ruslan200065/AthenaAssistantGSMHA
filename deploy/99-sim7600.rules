@@ -1,0 +1,9 @@
+# SIMCom SIM7600 USB modem (1E0E:9001).
+# The AT port is usually the 3rd interface: /dev/ttyUSB2.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1e0e", ATTRS{idProduct}=="9001", SYMLINK+="sim7600%n", GROUP="dialout", MODE="0660"
+
+# Optional: stable name for the USB camera. Adjust idVendor/idProduct to your camera.
+# SUBSYSTEM=="video4linux", ATTRS{idVendor}=="1d6b", SYMLINK+="athena-cam", GROUP="video", MODE="0660"
+
+# USB audio interface of the modem (for call.bridge), if present.
+SUBSYSTEM=="sound", ATTRS{idVendor}=="1e0e", GROUP="audio", MODE="0660"

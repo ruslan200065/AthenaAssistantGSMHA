@@ -1,0 +1,97 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Athena SIM7600",
+        "description": "Адрес локального REST API шлюза и токен из config.toml (bridge.api_token).",
+        "data": {
+          "name": "Название",
+          "url": "URL шлюза",
+          "token": "API-токен",
+          "verify_ssl": "Проверять SSL"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Обновить токен",
+        "description": "Токен для {url} больше не принимается.",
+        "data": {
+          "token": "API-токен"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к шлюзу",
+      "invalid_auth": "Неверный API-токен",
+      "unknown": "Неизвестная ошибка"
+    },
+    "abort": {
+      "already_configured": "Этот шлюз уже настроен",
+      "reauth_successful": "Токен обновлён"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Настройки Athena SIM7600",
+        "data": {
+          "scan_interval": "Интервал опроса, с",
+          "default_sms_number": "Номер для SMS по умолчанию"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "modem_state": { "name": "Состояние модема" },
+      "signal_dbm": { "name": "Уровень сигнала" },
+      "signal_percent": { "name": "Сигнал" },
+      "operator": { "name": "Оператор" },
+      "network": { "name": "Сеть" },
+      "registration": { "name": "Регистрация" },
+      "sim_state": { "name": "SIM" },
+      "model": { "name": "Модель" },
+      "firmware": { "name": "Прошивка" },
+      "imei": { "name": "IMEI" },
+      "iccid": { "name": "ICCID" },
+      "phone_number": { "name": "Номер SIM" },
+      "uptime": { "name": "Время работы" },
+      "sms_sent": { "name": "SMS отправлено" },
+      "sms_received": { "name": "SMS получено" },
+      "last_sms": { "name": "Последняя SMS" },
+      "camera_state": { "name": "Камера" },
+      "athena_connection": { "name": "Athena" }
+    },
+    "binary_sensor": {
+      "online": { "name": "Шлюз онлайн" },
+      "registered": { "name": "Зарегистрирован в сети" },
+      "call_active": { "name": "Идёт звонок" },
+      "ringing": { "name": "Входящий звонок" },
+      "athena_connected": { "name": "Athena подключена" },
+      "camera_online": { "name": "Камера онлайн" },
+      "motion": { "name": "Движение" }
+    },
+    "button": {
+      "snapshot": { "name": "Снимок с камеры" },
+      "answer": { "name": "Ответить на звонок" },
+      "hangup": { "name": "Сбросить звонок" },
+      "reset": { "name": "Перезапустить модем" }
+    },
+    "camera": {
+      "camera": { "name": "Камера" }
+    },
+    "notify": {
+      "sms": { "name": "SMS" }
+    }
+  },
+  "services": {
+    "send_sms": { "name": "Отправить SMS" },
+    "send_ussd": { "name": "USSD-запрос" },
+    "dial": { "name": "Позвонить" },
+    "answer_call": { "name": "Ответить на звонок" },
+    "hangup_call": { "name": "Завершить звонок" },
+    "reset_modem": { "name": "Перезапустить модем" },
+    "take_snapshot": { "name": "Снимок с камеры" },
+    "record_clip": { "name": "Записать видео" },
+    "bridge_call": { "name": "Соединить звонок с колонкой" }
+  }
+}

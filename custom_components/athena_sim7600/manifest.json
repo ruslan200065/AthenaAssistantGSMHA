@@ -1,0 +1,13 @@
+{
+  "domain": "athena_sim7600",
+  "name": "Athena SIM7600 GSM",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/athena-home/athena",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/athena-home/athena/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

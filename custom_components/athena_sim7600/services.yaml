@@ -1,0 +1,138 @@
+send_sms:
+  name: Отправить SMS
+  description: Отправляет SMS через SIM7600.
+  fields:
+    number:
+      name: Номер
+      description: Номер получателя в международном формате.
+      required: true
+      example: "+79991234567"
+      selector:
+        text:
+    text:
+      name: Текст
+      description: Текст сообщения (до 1000 символов, длинные разбиваются автоматически).
+      required: true
+      selector:
+        text:
+          multiline: true
+    entry_id:
+      name: Шлюз
+      description: ID записи интеграции (обычно не нужен).
+      required: false
+      selector:
+        text:
+
+send_ussd:
+  name: USSD-запрос
+  description: Отправляет USSD-код и возвращает ответ сети.
+  fields:
+    code:
+      name: Код
+      required: true
+      example: "*100#"
+      selector:
+        text:
+    entry_id:
+      name: Шлюз
+      required: false
+      selector:
+        text:
+
+dial:
+  name: Позвонить
+  description: Инициирует исходящий звонок с GSM-линии.
+  fields:
+    number:
+      name: Номер
+      required: true
+      example: "+79991234567"
+      selector:
+        text:
+    entry_id:
+      name: Шлюз
+      required: false
+      selector:
+        text:
+
+answer_call:
+  name: Ответить на звонок
+  description: Поднимает трубку на текущем входящем звонке.
+  fields:
+    entry_id:
+      name: Шлюз
+      required: false
+      selector:
+        text:
+
+hangup_call:
+  name: Завершить звонок
+  description: Кладёт трубку.
+  fields:
+    entry_id:
+      name: Шлюз
+      required: false
+      selector:
+        text:
+
+reset_modem:
+  name: Перезапустить модем
+  description: Перезапускает SIM7600 и заново открывает AT-канал.
+  fields:
+    entry_id:
+      name: Шлюз
+      required: false
+      selector:
+        text:
+
+take_snapshot:
+  name: Снимок с камеры
+  description: Сохраняет кадр в папку snapshots шлюза.
+  fields:
+    entry_id:
+      name: Шлюз
+      required: false
+      selector:
+        text:
+
+record_clip:
+  name: Записать видео
+  description: Записывает короткий клип с USB-камеры.
+  fields:
+    seconds:
+      name: Длительность
+      description: Секунды (1–120).
+      required: false
+      default: 12
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: с
+    entry_id:
+      name: Шлюз
+      required: false
+      selector:
+        text:
+
+bridge_call:
+  name: Соединить звонок с колонкой
+  description: Отвечает на текущий звонок и просит ядро Athena соединить его с колонкой (call.bridge).
+  fields:
+    room:
+      name: Комната
+      description: Комната колонки. По умолчанию — bridge_room из конфига шлюза.
+      required: false
+      selector:
+        text:
+    endpoint_id:
+      name: Endpoint ID
+      description: ID колонки, если нужно точное устройство.
+      required: false
+      selector:
+        text:
+    entry_id:
+      name: Шлюз
+      required: false
+      selector:
+        text:
