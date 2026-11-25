@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "1.2.6"
+__version__ = "1.2.7"
 PROTOCOL = "device-protocol/1"
 
 __all__ = ["__version__", "PROTOCOL"]

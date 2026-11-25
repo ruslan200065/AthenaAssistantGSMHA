@@ -21,6 +21,11 @@ from .transport import BaseTransport
 
 log = get_logger("modem.sim7600")
 
+# Commands that improve the line but are not supported by every SIM7600
+# firmware revision. A rejected optional command must not turn a healthy
+# modem into "initialization finished with errors".
+OPTIONAL_INIT_COMMANDS = ("AT+DDET=1", "AT+CRC=1")
+
 EventSink = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 
 _HEX = re.compile(r"^[0-9A-Fa-f]{10,}$")
@@ -186,6 +191,13 @@ class Sim7600:
                 command = f'AT+CPMS="{storage}","{storage}","{storage}"'
             result = await channel.command(command, timeout=5)
             if not result.ok:
+                if command.upper() in OPTIONAL_INIT_COMMANDS:
+                    log.info(
+                        "init %s пропущен: %s (не поддерживается прошивкой)",
+                        command,
+                        result.error,
+                    )
+                    continue
                 failures += 1
                 log.warning("init %s → %s", command, result.error)
                 if command.upper() == "ATE0" and result.timed_out:
