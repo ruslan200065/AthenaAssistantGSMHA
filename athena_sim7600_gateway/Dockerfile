@@ -9,6 +9,10 @@ RUN apt-get update \
         ffmpeg v4l-utils alsa-utils git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Bump the add-on version in config.yaml -> this layer is rebuilt and pip
+# installs the matching gateway commit instead of a cached wheel.
+COPY config.yaml /tmp/addon-config.yaml
+
 RUN pip install --no-cache-dir \
     "git+https://github.com/ruslan200065/AthenaAssistantGSMHA.git@main"
 

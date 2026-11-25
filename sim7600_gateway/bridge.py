@@ -93,7 +93,7 @@ class GatewayBridge:
                 await self._modem_task
             self._modem_task = None
         await self.audio.stop()
-        await self.voice.stop()
+        await self._stop_voice_call()
         await self.modem.stop()
         await self.camera.stop()
         log.info("шлюз остановлен")
@@ -154,7 +154,7 @@ class GatewayBridge:
                 )
             if state in ("ended", "missed", "failed"):
                 self._bridge_pending = False
-                await self.voice.stop()
+                await self._stop_voice_call()
                 await self._end_intercom("hangup")
             return
 
@@ -213,9 +213,24 @@ class GatewayBridge:
             await asyncio.sleep(max(0.0, modem_config.auto_answer_delay))
             result = await self.modem.answer()
             if result.ok:
-                await self.voice.start()
+                await self._start_voice_call()
             else:
                 log.warning("автоответ не удался: %s", result.error)
+
+    async def _start_voice_call(self) -> None:
+        channel = self.modem.channel
+        if channel is not None:
+            with contextlib.suppress(Exception):
+                await channel.command("AT+CPCMREG=1", timeout=5)
+        await self.voice.start()
+
+    async def _stop_voice_call(self) -> None:
+        was_active = self.voice.active
+        await self.voice.stop()
+        channel = self.modem.channel
+        if was_active and channel is not None:
+            with contextlib.suppress(Exception):
+                await channel.command("AT+CPCMREG=0", timeout=5)
 
     async def _record_ring_clip(self) -> None:
         try:
@@ -261,14 +276,14 @@ class GatewayBridge:
                 if not result.ok:
                     return {"status": "failed", "error": result.error}
                 if mode == "bridge" or bridge_room or bridge_endpoint:
-                    await self.voice.stop()
+                    await self._stop_voice_call()
                     bridged = await self.start_bridge(bridge_room, bridge_endpoint)
                     if not bridged.get("ok"):
                         log.warning("call.bridge не отправлен: %s", bridged.get("error"))
                 elif self._bridge_pending or self.audio.active:
                     log.info("звонок уже соединён с колонкой, голосовой цикл не запускаю")
                 else:
-                    await self.voice.start()
+                    await self._start_voice_call()
                 return {"status": "done"}
             if action == "hangup":
                 result = await self.modem.hangup()
