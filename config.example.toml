@@ -10,8 +10,6 @@ port = 8099
 api_token = "change-me-please"
 log_level = "INFO"
 state_dir = "./data"
-# Allow unauthenticated access to /api/camera/* only (e.g. for an NVR).
-allow_anonymous_camera = false
 
 [athena]
 enabled = true
@@ -74,21 +72,3 @@ chunk_ms = 20                   # 640 bytes at 16 kHz
 # Experimental: AT+CHLD=2 while the bridge starts (paired with AT+CHLD=0).
 hold_before_bridge = false
 
-[camera]
-enabled = true
-device = "/dev/video0"
-mock = false
-width = 1280
-height = 720
-fps = 15
-# mjpg | yuyv | h264 | auto. "auto" lets the driver pick the best format.
-input_format = "auto"
-ffmpeg = "ffmpeg"
-v4l2ctl = "v4l2-ctl"
-snapshot_on_ring = true
-snapshot_dir = "./data/snapshots"
-clip_on_ring = false
-clip_seconds = 12
-motion_detection = true
-motion_threshold = 0.035      # 0..1 share of changed pixels
-motion_cooldown = 30          # seconds between motion events

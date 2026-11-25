@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from datetime import timedelta
 from typing import Any
 
@@ -29,8 +28,6 @@ class AthenaSim7600Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.api = api
         self.entry = entry
-        self.last_motion: float | None = None
-        self.last_motion_info: dict[str, Any] = {}
         self.last_sms: dict[str, Any] = {}
         self.last_call: dict[str, Any] = {}
 
@@ -43,16 +40,8 @@ class AthenaSim7600Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     def note_event(self, event: dict[str, Any]) -> None:
         event_type = str(event.get("type") or "")
         data = event.get("data") or {}
-        if event_type == "camera.motion":
-            self.last_motion = time.time()
-            self.last_motion_info = data
-        elif event_type == "sms.incoming":
+        if event_type == "sms.incoming":
             self.last_sms = data
         elif event_type == "call.incoming":
             self.last_call = data
 
-    @property
-    def motion_active(self) -> bool:
-        from .const import MOTION_HOLD_SECONDS
-
-        return bool(self.last_motion and time.time() - self.last_motion < MOTION_HOLD_SECONDS)

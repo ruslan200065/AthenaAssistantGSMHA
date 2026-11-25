@@ -18,9 +18,9 @@
   "type": "hello",
   "token": "dev_...",
   "kind": "gsm",
-  "firmware": "sim7600-gateway/1.2.7",
+  "firmware": "sim7600-gateway/1.3.0",
   "hardware": "SIM7600E-H",
-  "capabilities": ["calls", "sms", "dtmf", "audio_in", "audio_out", "camera"],
+  "capabilities": ["calls", "sms", "dtmf", "audio_in", "audio_out"],
   "device_id": "sim7600-gateway-01",
   "room_hint": "Прихожая",
   "ip": "192.168.1.50"
@@ -112,13 +112,11 @@
 | `call.state` | `{state, number, duration_sec?}` | `active`, `ended`, `missed`, `failed` |
 | `sms.incoming` | `{number, text<=2000}` | Полный текст после склейки UDH |
 | `dtmf` | `{digit}` | Только реальный DTMF абонента |
-| `device.event` | `{event, data}` | `ussd.result`, `diag.modem`, `camera.*` |
 | `call.bridge` | `{room?/target_endpoint_id?, call_number?}` | Спецкадр после ответа |
 | `playback.stopped` | `{reason}` | Ответ проигран в трубку |
 | `conversation.end` | `{reason}` | Голосовой диалог закрыт (`ended`/`timeout`/`error`) |
 
 SSE-события шлюза дополнительно включают `bridge.error`, `core.error`,
-`intercom.frame`, `modem.*`, `camera.*`, но в Athena уходят только кадры
 протокола.
 
 Успешная обработка события → `{"type":"event.ack","event":"<type>"}`.

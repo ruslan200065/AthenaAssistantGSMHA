@@ -1,4 +1,4 @@
-"""Gateway orchestration: modem + camera + Athena core + local event bus."""
+"""Gateway orchestration: modem + Athena core + local event bus."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from . import __version__, athena
 from .athena import frames
 from .audio_bridge import AudioBridge, audio_devices
 from .bus import EventBus
-from .camera.service import CameraService
 from .config import Config
 from .log import get_logger
 from .modem.errors import ModemError
@@ -35,7 +34,6 @@ class GatewayBridge:
         self._modem_task: asyncio.Task | None = None
         self.simulator: SimulatedModem | None = None
 
-        self.camera = CameraService(config.camera, on_event=self._on_camera_event)
 
         transport = None
         if config.modem.mock:
@@ -90,7 +88,6 @@ class GatewayBridge:
                 "mock": self.config.modem.mock,
             },
         )
-        await self.camera.start()
         if self.config.modem.enabled:
             self._modem_task = asyncio.create_task(
                 self._modem_supervisor(), name="modem-supervisor"
@@ -112,7 +109,6 @@ class GatewayBridge:
         await self.audio.stop()
         await self._stop_voice_call()
         await self.modem.stop()
-        await self.camera.stop()
         for task in list(self._background):
             task.cancel()
         for task in list(self._background):
@@ -150,9 +146,6 @@ class GatewayBridge:
                 }
             )
             log.info("входящий звонок от %s", mask_numbers(data.get("number")) or "неизвестный")
-            self._spawn(self.camera.snapshot_on_ring())
-            if self.config.camera.clip_on_ring:
-                self._spawn(self._record_ring_clip())
             await self.bus.publish(event, data)
             if self.athena.connected:
                 await self.athena.send_event(
@@ -379,21 +372,6 @@ class GatewayBridge:
         if self._bridge_timeout_task is not None:
             self._bridge_timeout_task.cancel()
             self._bridge_timeout_task = None
-
-    async def _record_ring_clip(self) -> None:
-        try:
-            record = await self.camera.record()
-            if record:
-                log.info("записан клип звонка: %s", record.get("filename"))
-        except Exception as exc:
-            log.warning("не удалось записать клип: %s", exc)
-
-    # ── camera events ────────────────────────────────────────────────────────
-
-    async def _on_camera_event(self, event: str, data: dict[str, Any]) -> None:
-        await self.bus.publish(event, data)
-        if self.athena.connected and event in ("camera.motion", "camera.snapshot"):
-            await self.athena.send_event(frames.device_event(event, data))
 
     # ── Athena → gateway commands ───────────────────────────────────────────
 
@@ -642,7 +620,6 @@ class GatewayBridge:
                 "config_source": self.config.source,
             },
             "modem": self.modem.snapshot.to_dict(),
-            "camera": self.camera.info(),
             "athena": self.athena.status(),
             "audio": self.audio.status(),
             "voice_call": self.voice.status,
@@ -667,7 +644,6 @@ class GatewayBridge:
         return {
             "gateway": self.status()["gateway"],
             "at_log": self.modem.at_log[-50:],
-            "camera": self.camera.info(),
             "athena": self.athena.status(),
             "config": {
                 "modem": {
@@ -676,13 +652,6 @@ class GatewayBridge:
                     "unknown_callers": self.config.modem.unknown_callers,
                     "bridge_room": self.config.modem.bridge_room,
                     "auto_answer": self.config.modem.auto_answer,
-                },
-                "camera": {
-                    "device": self.config.camera.device,
-                    "mock": self.config.camera.mock,
-                    "width": self.config.camera.width,
-                    "height": self.config.camera.height,
-                    "fps": self.config.camera.fps,
                 },
                 "athena": {
                     "url": self.config.athena.url,

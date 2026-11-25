@@ -11,7 +11,6 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
-    Platform.CAMERA,
     Platform.NOTIFY,
 ]
 
@@ -28,9 +27,7 @@ EVENT_GATEWAY = "athena_sim7600_event"
 EVENT_SMS = "athena_sim7600_sms_received"
 EVENT_CALL = "athena_sim7600_incoming_call"
 EVENT_CALL_STATE = "athena_sim7600_call_state"
-EVENT_MOTION = "athena_sim7600_motion"
 
-MOTION_HOLD_SECONDS = 60
 
 SERVICE_SEND_SMS = "send_sms"
 SERVICE_SEND_USSD = "send_ussd"
@@ -38,8 +35,6 @@ SERVICE_DIAL = "dial"
 SERVICE_ANSWER = "answer_call"
 SERVICE_HANGUP = "hangup_call"
 SERVICE_RESET = "reset_modem"
-SERVICE_SNAPSHOT = "take_snapshot"
-SERVICE_RECORD = "record_clip"
 SERVICE_BRIDGE = "bridge_call"
 
 ATTR_ENTRY_ID = "entry_id"

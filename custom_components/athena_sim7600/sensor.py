@@ -156,14 +156,6 @@ SENSORS: tuple[AthenaSensorDescription, ...] = (
         nested="event",
     ),
     AthenaSensorDescription(
-        key="camera_state",
-        name="Камера",
-        translation_key="camera_state",
-        icon="mdi:video",
-        value_key="available",
-        nested="camera",
-    ),
-    AthenaSensorDescription(
         key="athena_connection",
         name="Athena",
         translation_key="athena_connection",
@@ -203,8 +195,6 @@ class AthenaModemSensor(AthenaSim7600Entity, SensorEntity):
             sms = self.coordinator.last_sms or {}
             text = sms.get("text") or ""
             return text[:250] if text else None
-        if description.nested == "camera":
-            return "онлайн" if self.camera.get(description.value_key) else "нет кадра"
         if description.nested == "athena":
             return "подключено" if self.athena.get(description.value_key) else "нет связи"
         value = self.modem.get(description.value_key)

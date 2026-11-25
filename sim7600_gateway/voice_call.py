@@ -368,6 +368,15 @@ class CallVoiceSession:
             return
         if kind == "assistant.error":
             log.warning("голосовой цикл: %s — %s", frame.get("code"), frame.get("message"))
+            if frame.get("listen"):
+                # The core asked to keep the line open: a failed recognition is
+                # not the end of the call.
+                self._listening = True
+                self._follow_up = True
+                self._schedule_followup_timeout(
+                    max(3, _safe_int(frame.get("follow_up_timeout_seconds"), 60) or 60)
+                )
+                return
             await self._end_dialogue("error")
             return
         if kind == "conversation.end":
@@ -488,8 +497,10 @@ class CallVoiceSession:
             for key in ("listen", "end", "follow_up_timeout_seconds", "can_interrupt"):
                 if key in self._last_audio_frame:
                     reply[key] = self._last_audio_frame[key]
-        listen = bool(reply.get("listen"))
-        timeout = max(3, _safe_int(reply.get("follow_up_timeout_seconds"), 8) or 8)
+        # A phone line always listens back unless the core ended the dialogue
+        # (a farewell). Silence after a reply is the worst possible outcome.
+        listen = not reply.get("end", False)
+        timeout = max(3, _safe_int(reply.get("follow_up_timeout_seconds"), 60) or 60)
         if listen and not reply.get("end", False):
             self._listening = True
             self._follow_up = True

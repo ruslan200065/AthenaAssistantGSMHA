@@ -7,7 +7,6 @@
 1. «Настройки → Дополнения → Магазин дополнений» → ⋮ → «Репозитории».
 2. Добавьте `https://github.com/ruslan200065/AthenaAssistantGSMHA`.
 3. Установите «Athena SIM7600 Gateway» и откройте вкладку «Настройки»:
-   `athena_url`, `athena_token`, `api_token`, `modem_port`, `camera_device`,
    `pcm_port` (обычно `/dev/ttyUSB4`), `audio_device` (обычно `auto`),
    `playback_volume` (громкость ответов, по умолчанию 50).
 4. Запустите дополнение и откройте панель через ingress (порт 8099).
@@ -19,7 +18,7 @@
 ### Вручную
 
 ```bash
-cp -r custom_components/athena_sim7600 /config/custom_components/
+cp -r sim7600-gateway/ha/custom_components/athena_sim7600 /config/custom_components/
 ```
 
 Перезапустите Home Assistant.
@@ -58,17 +57,13 @@ cp -r custom_components/athena_sim7600 /config/custom_components/
 | sensor | `sensor.athena_gsm_vremya_raboty` | секунды |
 | sensor | `sensor.athena_gsm_sms_otpravleno` / `..._polucheno` | счётчики |
 | sensor | `sensor.athena_gsm_poslednyaya_sms` | текст (до 250 символов) + атрибуты |
-| sensor | `sensor.athena_gsm_kamera` | `онлайн` / `нет кадра` |
 | sensor | `sensor.athena_gsm_athena` | связь с ядром |
 | binary_sensor | `..._shlyuz_onlayn` | шлюз отвечает |
 | binary_sensor | `..._zaregistrirovan_v_seti` | CREG |
 | binary_sensor | `..._idet_zvonok` | активный звонок |
 | binary_sensor | `..._vkhodyashchiy_zvonok` | ringing, атрибут `caller` |
-| binary_sensor | `..._dvizhenie` | движение за последние 60 с |
-| binary_sensor | `..._kamera_onlayn` | есть кадры |
 | binary_sensor | `..._athena_podklyuchena` | WS к ядру |
-| camera | `camera.athena_gsm_kamera` | снимки + MJPEG |
-| button | `..._snimok_s_kamery`, `..._otvetit_na_zvonok`, `..._sbroson`, `..._perezapustit_modem` | действия |
+| button | `..._otvetit_na_zvonok`, `..._sbroson`, `..._perezapustit_modem` | действия |
 | notify | `notify.athena_gsm_sms` | отправка SMS |
 
 Некоторые сенсоры (IMEI, ICCID, модель, прошивка, номер SIM) отключены по
@@ -98,8 +93,6 @@ data:
 service: athena_sim7600.answer_call
 service: athena_sim7600.hangup_call
 
-# Камера
-service: athena_sim7600.take_snapshot
 service: athena_sim7600.record_clip
 data:
   seconds: 20
@@ -130,7 +123,6 @@ service: athena_sim7600.reset_modem
 | `athena_sim7600_sms_received` | `{number, text, at}` |
 | `athena_sim7600_incoming_call` | `{number, at}` |
 | `athena_sim7600_call_state` | `{state, number, duration_sec}` |
-| `athena_sim7600_motion` | `{changed, threshold, at}` |
 
 `athena_sim7600_event` может также содержать `bridge.error`, `core.error` и
 `intercom.frame`. Голосовые кадры (`audio.start`, бинарный PCM, `audio.url`,
@@ -166,37 +158,29 @@ action:
       message: "Перезвоните: {{ state_attr('binary_sensor.athena_gsm_vkhodyashchiy_zvonok','caller') }}"
 ```
 
-Пример «снимок при движении + SMS»:
 
 ```yaml
-alias: Камера — движение
 trigger:
   - platform: state
     entity_id: binary_sensor.athena_gsm_dvizhenie
     to: "on"
 action:
-  - service: athena_sim7600.take_snapshot
   - delay: "00:00:02"
   - service: athena_sim7600.send_sms
     data:
       number: "+79991234567"
-      text: "Движение у двери"
 ```
 
 ## Карточка Lovelace
 
 ```yaml
 type: picture-entity
-entity: camera.athena_gsm_kamera
-camera_image: camera.athena_gsm_kamera
 show_state: false
 ```
 
-Живое MJPEG-видео (без HLS):
 
 ```yaml
 type: iframe
-url: http://192.168.1.50:8099/api/camera/stream.mjpg?token=ВАШ_ТОКЕН
 aspect_ratio: "16:9"
 ```
 

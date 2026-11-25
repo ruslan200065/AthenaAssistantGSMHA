@@ -8,7 +8,6 @@ services:
     network_mode: host
     devices:
       - /dev/ttyUSB2:/dev/ttyUSB2
-      - /dev/video0:/dev/video0
       # SIM7600 USB audio for voice calls / call.bridge (optional):
       - /dev/snd:/dev/snd
     group_add:

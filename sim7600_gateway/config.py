@@ -43,7 +43,6 @@ class BridgeConfig:
     api_token: str = ""
     log_level: str = "INFO"
     state_dir: str = "./data"
-    allow_anonymous_camera: bool = False
 
 
 @dataclass
@@ -96,25 +95,6 @@ class AudioBridgeConfig:
     hold_before_bridge: bool = False
 
 
-@dataclass
-class CameraConfig:
-    enabled: bool = True
-    device: str = "/dev/video0"
-    mock: bool = False
-    width: int = 1280
-    height: int = 720
-    fps: int = 15
-    input_format: str = "auto"
-    ffmpeg: str = "ffmpeg"
-    v4l2ctl: str = "v4l2-ctl"
-    snapshot_on_ring: bool = True
-    snapshot_dir: str = "./data/snapshots"
-    clip_on_ring: bool = False
-    clip_seconds: int = 12
-    motion_detection: bool = True
-    motion_threshold: float = 0.035
-    motion_cooldown: float = 30.0
-
 
 @dataclass
 class Config:
@@ -122,7 +102,6 @@ class Config:
     athena: AthenaConfig = field(default_factory=AthenaConfig)
     modem: ModemConfig = field(default_factory=ModemConfig)
     audio_bridge: AudioBridgeConfig = field(default_factory=AudioBridgeConfig)
-    camera: CameraConfig = field(default_factory=CameraConfig)
     source: str = "<defaults>"
 
     @property
@@ -131,7 +110,6 @@ class Config:
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        Path(self.camera.snapshot_dir).expanduser().mkdir(parents=True, exist_ok=True)
 
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -177,9 +155,6 @@ def apply_env(cfg: Config) -> Config:
     cfg.bridge.api_token = _env_str("API_TOKEN", cfg.bridge.api_token)
     cfg.bridge.log_level = _env_str("LOG_LEVEL", cfg.bridge.log_level)
     cfg.bridge.state_dir = _env_str("STATE_DIR", cfg.bridge.state_dir)
-    cfg.bridge.allow_anonymous_camera = _env_bool(
-        "ALLOW_ANONYMOUS_CAMERA", cfg.bridge.allow_anonymous_camera
-    )
 
     cfg.athena.enabled = _env_bool("ATHENA_ENABLED", cfg.athena.enabled)
     cfg.athena.url = _env_str("ATHENA_URL", cfg.athena.url)
@@ -192,15 +167,6 @@ def apply_env(cfg: Config) -> Config:
     cfg.modem.port = _env_str("MODEM_PORT", cfg.modem.port)
     cfg.modem.baudrate = _env_int("MODEM_BAUD", cfg.modem.baudrate)
     cfg.modem.mock = _env_bool("MODEM_MOCK", cfg.modem.mock)
-
-    cfg.camera.enabled = _env_bool("CAMERA_ENABLED", cfg.camera.enabled)
-    cfg.camera.device = _env_str("CAMERA_DEVICE", cfg.camera.device)
-    cfg.camera.mock = _env_bool("CAMERA_MOCK", cfg.camera.mock)
-    cfg.camera.width = _env_int("CAMERA_WIDTH", cfg.camera.width)
-    cfg.camera.height = _env_int("CAMERA_HEIGHT", cfg.camera.height)
-    cfg.camera.fps = _env_int("CAMERA_FPS", cfg.camera.fps)
-    cfg.camera.motion_detection = _env_bool("CAMERA_MOTION", cfg.camera.motion_detection)
-    cfg.camera.snapshot_dir = _env_str("CAMERA_SNAPSHOT_DIR", cfg.camera.snapshot_dir)
 
     cfg.audio_bridge.enabled = _env_bool("AUDIO_BRIDGE_ENABLED", cfg.audio_bridge.enabled)
     cfg.audio_bridge.capture_device = _env_str(
@@ -237,7 +203,6 @@ def load_config(path: str | Path | None = None) -> Config:
         athena=_build(AthenaConfig, raw.get("athena")),
         modem=_build(ModemConfig, raw.get("modem")),
         audio_bridge=_build(AudioBridgeConfig, raw.get("audio_bridge")),
-        camera=_build(CameraConfig, raw.get("camera")),
         source=source,
     )
     apply_env(cfg)
@@ -273,6 +238,4 @@ def validate(cfg: Config) -> list[str]:
             warnings.append("audio_bridge.audio_transport must be auto|serial|alsa")
         if not 0 <= cfg.audio_bridge.playback_volume <= 200:
             warnings.append("audio_bridge.playback_volume must be between 0 and 200")
-    if cfg.camera.input_format not in ("auto", "mjpg", "yuyv", "h264"):
-        warnings.append("camera.input_format must be auto|mjpg|yuyv|h264")
     return warnings

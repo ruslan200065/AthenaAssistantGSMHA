@@ -15,7 +15,6 @@ from .const import (
     EVENT_CALL,
     EVENT_CALL_STATE,
     EVENT_GATEWAY,
-    EVENT_MOTION,
     EVENT_SMS,
     PLATFORMS,
 )
@@ -105,8 +104,6 @@ async def _event_loop(hass: HomeAssistant, runtime: RuntimeData) -> None:
                     hass.bus.async_fire(EVENT_CALL, data)
                 elif event_type == "call.state":
                     hass.bus.async_fire(EVENT_CALL_STATE, data)
-                elif event_type == "camera.motion":
-                    hass.bus.async_fire(EVENT_MOTION, data)
                 if event_type in (
                     "call.incoming",
                     "call.state",

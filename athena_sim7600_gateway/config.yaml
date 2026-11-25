@@ -1,7 +1,7 @@
 name: Athena SIM7600 Gateway
-version: "1.2.7"
+version: "1.3.0"
 slug: athena_sim7600_gateway
-description: SIM7600 GSM + USB camera bridge for Athena Core and Home Assistant
+description: SIM7600 GSM bridge for Athena Core and Home Assistant
 url: https://github.com/ruslan200065/AthenaAssistantGSMHA
 arch:
   - aarch64
@@ -12,7 +12,6 @@ init: false
 host_network: true
 uart: true
 usb: true
-video: true
 audio: true
 ingress: true
 ingress_port: 8099
@@ -30,9 +29,6 @@ options:
   unknown_callers: "notify"
   allowed_numbers: ""
   bridge_room: ""
-  camera_enabled: true
-  camera_device: "/dev/video0"
-  camera_mock: false
   audio_enabled: true
   audio_device: "auto"
   pcm_port: "/dev/ttyUSB4"
@@ -49,9 +45,6 @@ schema:
   unknown_callers: list(allow|notify|reject)
   allowed_numbers: str
   bridge_room: str
-  camera_enabled: bool
-  camera_device: str
-  camera_mock: bool
   audio_enabled: bool
   audio_device: str
   pcm_port: str

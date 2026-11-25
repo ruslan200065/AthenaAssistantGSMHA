@@ -13,8 +13,6 @@ curl http://127.0.0.1:8099/api/health
 # 3. Модем отвечает по AT?
 python -m sim7600_gateway.tools.probe --modem-only
 
-# 4. Камера видна?
-python -m sim7600_gateway.tools.probe --camera-only
 
 # 5. Полный статус (нужен токен)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8099/api/status | python -m json.tool
@@ -27,7 +25,7 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8099/api/diagnostics | p
 
 ```bash
 ls -l /dev/ttyUSB* /dev/sim7600*
-sudo usermod -aG dialout,video,audio sim7600
+sudo usermod -aG dialout,audio sim7600
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
@@ -109,40 +107,6 @@ sudo systemctl disable ModemManager
 - `call.incoming` отправляется до ответа; если ядро не успело — проверьте
   задержку сети.
 
-## Камера
-
-### `ffmpeg not found`
-
-```bash
-sudo apt install ffmpeg v4l-utils
-# или пропишите полный путь: camera.ffmpeg = "/usr/bin/ffmpeg"
-```
-
-### `camera frame is not available`
-
-- `v4l2-ctl --device /dev/video0 --list-formats-ext` — есть ли форматы.
-- Камера занята другим процессом (Motion, ZoneMinder, браузер).
-- Неверный `input_format`: попробуйте `mjpg`, затем `yuyv`.
-- Уменьшите разрешение/fps: некоторые камеры не держат 1080p MJPEG.
-- Проверьте `dmesg` на USB-ошибки; попробуйте другой порт USB 3.0.
-
-### Чёрный кадр / артефакты
-
-- `-q:v 4` уже в pipeline; уменьшите разрешение.
-- Камера отдаёт H264 — оставьте `input_format="auto"` или `"h264"`.
-- Для очень дешёвых камер MJPG может быть нестабилен: `input_format="yuyv"`.
-
-### HA не показывает поток
-
-- Снимки работают? Значит камера жива, проблема в потоке.
-- HA stream может не открыть MJPEG; используйте iframe или picture-entity.
-- Проверьте токен в `stream_url` (он в атрибутах сущности).
-
-### Движение срабатывает постоянно
-
-- Ночной шум/автоэкспозиция: поднимите `motion_threshold` до 0.06–0.1.
-- Увеличьте `motion_cooldown`.
-- В mock-режиме `testsrc2` движется всегда — это ожидаемо.
 
 ## Home Assistant
 
@@ -206,5 +170,4 @@ journalctl -u sim7600-gateway -n 300 --no-pager > gateway.log
 python -m sim7600_gateway.tools.probe --modem-only > probe.txt 2>&1
 ```
 
-Приложите `diag.json`, `gateway.log`, `probe.txt`, модель модема/камеры и
 версию ОС. Токены и номера лучше заменить на `***` перед публикацией.

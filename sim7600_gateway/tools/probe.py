@@ -1,4 +1,4 @@
-"""Hardware probe: verify the modem port and the camera before running the gateway."""
+"""Hardware probe: verify the SIM7600 AT port before running the gateway."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import sys
 
-from ..camera.backend import probe_v4l2
 from ..config import load_config
 from ..modem.at_channel import AtChannel
 from ..modem.transport import SerialTransport
@@ -54,36 +53,13 @@ async def probe_modem(port: str, baudrate: int) -> int:
     return 0
 
 
-def probe_camera(device: str, control: str) -> int:
-    formats = probe_v4l2(device, control)
-    if not formats:
-        print(f"✗ не удалось получить форматы {device} (нужен v4l2-ctl и Linux)")
-        return 1
-    print(f"✓ {device}")
-    for name, sizes in formats.items():
-        for entry in sizes[:6]:
-            fps = max(entry["fps"]) if entry["fps"] else "?"
-            print(f"    {name}: {entry['width']}x{entry['height']} @ {fps} fps")
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     config = load_config()
-    parser = argparse.ArgumentParser(description="Probe SIM7600 and the USB camera")
+    parser = argparse.ArgumentParser(description="Probe the SIM7600 AT port")
     parser.add_argument("--port", default=config.modem.port)
     parser.add_argument("--baud", type=int, default=config.modem.baudrate)
-    parser.add_argument("--camera", default=config.camera.device)
-    parser.add_argument("--v4l2ctl", default=config.camera.v4l2ctl)
-    parser.add_argument("--modem-only", action="store_true")
-    parser.add_argument("--camera-only", action="store_true")
     args = parser.parse_args(argv)
-
-    code = 0
-    if not args.camera_only:
-        code |= asyncio.run(probe_modem(args.port, args.baud))
-    if not args.modem_only:
-        code |= probe_camera(args.camera, args.v4l2ctl)
-    return code
+    return asyncio.run(probe_modem(args.port, args.baud))
 
 
 if __name__ == "__main__":

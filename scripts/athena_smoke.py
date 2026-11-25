@@ -31,8 +31,6 @@ def main() -> int:
     config.bridge.state_dir = tempfile.mkdtemp(prefix="sim7600-smoke-")
     config.athena.enabled = False
     config.modem.mock = True
-    config.camera.enabled = False
-    config.camera.mock = True
 
     headers = {"Authorization": "Bearer smoke-token"}
     checks: list[tuple[str, bool]] = []

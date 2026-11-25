@@ -35,9 +35,6 @@ class AthenaSim7600Entity(CoordinatorEntity[AthenaSim7600Coordinator]):
     def modem(self) -> dict[str, Any]:
         return (self.coordinator.data or {}).get("modem") or {}
 
-    @property
-    def camera(self) -> dict[str, Any]:
-        return (self.coordinator.data or {}).get("camera") or {}
 
     @property
     def athena(self) -> dict[str, Any]:

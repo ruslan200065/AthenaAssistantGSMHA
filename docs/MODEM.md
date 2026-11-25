@@ -92,7 +92,7 @@ AT-канал различает «ответ на команду» и URC: по
 Проверка кодека:
 
 ```bash
-python -m pytest tests/test_pdu.py -q
+python sim7600-gateway/scripts/athena_smoke.py
 ```
 
 ## USSD

@@ -6,7 +6,6 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
-from urllib.parse import quote
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -39,14 +38,6 @@ class GatewayApi:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}
 
-    @property
-    def stream_url(self) -> str:
-        return f"{self.base_url}/api/camera/stream.mjpg?token={quote(self.token)}"
-
-    @property
-    def snapshot_url(self) -> str:
-        return f"{self.base_url}/api/camera/snapshot.jpg?token={quote(self.token)}"
-
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
         try:
@@ -77,9 +68,6 @@ class GatewayApi:
         if not isinstance(result, dict):
             raise GatewayError("unexpected status payload")
         return result
-
-    async def camera_info(self) -> dict[str, Any]:
-        return await self._request("GET", "/api/camera/info")
 
     async def recent_sms(self, limit: int = 20) -> list[dict[str, Any]]:
         return await self._request("GET", f"/api/sms/recent?limit={limit}")
@@ -118,17 +106,6 @@ class GatewayApi:
             "/api/calls/bridge",
             json={"room": room, "endpoint_id": endpoint_id},
         )
-
-    async def snapshot(self) -> bytes:
-        data = await self._request("GET", "/api/camera/snapshot.jpg")
-        return data if isinstance(data, bytes) else b""
-
-    async def save_snapshot(self) -> dict[str, Any]:
-        data = await self._request("GET", "/api/camera/snapshot.jpg?save=true")
-        return {"size": len(data) if isinstance(data, bytes) else 0}
-
-    async def record(self, seconds: float = 12) -> dict[str, Any]:
-        return await self._request("POST", "/api/camera/record", json={"seconds": seconds})
 
     # ── server-sent events ───────────────────────────────────────────────────
 

@@ -42,56 +42,113 @@
   },
   "entity": {
     "sensor": {
-      "modem_state": { "name": "Состояние модема" },
-      "signal_dbm": { "name": "Уровень сигнала" },
-      "signal_percent": { "name": "Сигнал" },
-      "operator": { "name": "Оператор" },
-      "network": { "name": "Сеть" },
-      "registration": { "name": "Регистрация" },
-      "sim_state": { "name": "SIM" },
-      "model": { "name": "Модель" },
-      "firmware": { "name": "Прошивка" },
-      "imei": { "name": "IMEI" },
-      "iccid": { "name": "ICCID" },
-      "phone_number": { "name": "Номер SIM" },
-      "uptime": { "name": "Время работы" },
-      "sms_sent": { "name": "SMS отправлено" },
-      "sms_received": { "name": "SMS получено" },
-      "last_sms": { "name": "Последняя SMS" },
-      "camera_state": { "name": "Камера" },
-      "athena_connection": { "name": "Athena" }
+      "modem_state": {
+        "name": "Состояние модема"
+      },
+      "signal_dbm": {
+        "name": "Уровень сигнала"
+      },
+      "signal_percent": {
+        "name": "Сигнал"
+      },
+      "operator": {
+        "name": "Оператор"
+      },
+      "network": {
+        "name": "Сеть"
+      },
+      "registration": {
+        "name": "Регистрация"
+      },
+      "sim_state": {
+        "name": "SIM"
+      },
+      "model": {
+        "name": "Модель"
+      },
+      "firmware": {
+        "name": "Прошивка"
+      },
+      "imei": {
+        "name": "IMEI"
+      },
+      "iccid": {
+        "name": "ICCID"
+      },
+      "phone_number": {
+        "name": "Номер SIM"
+      },
+      "uptime": {
+        "name": "Время работы"
+      },
+      "sms_sent": {
+        "name": "SMS отправлено"
+      },
+      "sms_received": {
+        "name": "SMS получено"
+      },
+      "last_sms": {
+        "name": "Последняя SMS"
+      },
+      "athena_connection": {
+        "name": "Athena"
+      }
     },
     "binary_sensor": {
-      "online": { "name": "Шлюз онлайн" },
-      "registered": { "name": "Зарегистрирован в сети" },
-      "call_active": { "name": "Идёт звонок" },
-      "ringing": { "name": "Входящий звонок" },
-      "athena_connected": { "name": "Athena подключена" },
-      "camera_online": { "name": "Камера онлайн" },
-      "motion": { "name": "Движение" }
+      "online": {
+        "name": "Шлюз онлайн"
+      },
+      "registered": {
+        "name": "Зарегистрирован в сети"
+      },
+      "call_active": {
+        "name": "Идёт звонок"
+      },
+      "ringing": {
+        "name": "Входящий звонок"
+      },
+      "athena_connected": {
+        "name": "Athena подключена"
+      }
     },
     "button": {
-      "snapshot": { "name": "Снимок с камеры" },
-      "answer": { "name": "Ответить на звонок" },
-      "hangup": { "name": "Сбросить звонок" },
-      "reset": { "name": "Перезапустить модем" }
-    },
-    "camera": {
-      "camera": { "name": "Камера" }
+      "answer": {
+        "name": "Ответить на звонок"
+      },
+      "hangup": {
+        "name": "Сбросить звонок"
+      },
+      "reset": {
+        "name": "Перезапустить модем"
+      }
     },
     "notify": {
-      "sms": { "name": "SMS" }
+      "sms": {
+        "name": "SMS"
+      }
     }
   },
   "services": {
-    "send_sms": { "name": "Отправить SMS" },
-    "send_ussd": { "name": "USSD-запрос" },
-    "dial": { "name": "Позвонить" },
-    "answer_call": { "name": "Ответить на звонок" },
-    "hangup_call": { "name": "Завершить звонок" },
-    "reset_modem": { "name": "Перезапустить модем" },
-    "take_snapshot": { "name": "Снимок с камеры" },
-    "record_clip": { "name": "Записать видео" },
-    "bridge_call": { "name": "Соединить звонок с колонкой" }
+    "send_sms": {
+      "name": "Отправить SMS"
+    },
+    "send_ussd": {
+      "name": "USSD-запрос"
+    },
+    "dial": {
+      "name": "Позвонить"
+    },
+    "answer_call": {
+      "name": "Ответить на звонок"
+    },
+    "hangup_call": {
+      "name": "Завершить звонок"
+    },
+    "reset_modem": {
+      "name": "Перезапустить модем"
+    },
+    "bridge_call": {
+      "name": "Соединить звонок с колонкой"
+    }
   }
 }

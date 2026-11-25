@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p /data/snapshots
-
 python3 - <<'PY'
 import json
 from pathlib import Path
@@ -37,7 +35,6 @@ port = 8099
 api_token = {q(api_token)}
 log_level = {q(options.get("log_level") or "INFO")}
 state_dir = "/data"
-allow_anonymous_camera = false
 
 [athena]
 enabled = {flag(options.get("athena_enabled", True))}
@@ -57,18 +54,6 @@ allowed_numbers = {json.dumps(numbers, ensure_ascii=False)}
 bridge_room = {q(options.get("bridge_room") or "")}
 auto_answer = false
 
-[camera]
-enabled = {flag(options.get("camera_enabled", True))}
-device = {q(options.get("camera_device") or "/dev/video0")}
-mock = {flag(options.get("camera_mock", False))}
-width = 1280
-height = 720
-fps = 15
-input_format = "auto"
-snapshot_on_ring = true
-snapshot_dir = "/data/snapshots"
-motion_detection = true
-motion_threshold = 0.035
 
 [audio_bridge]
 enabled = {flag(options.get("audio_enabled", True))}

@@ -11,8 +11,6 @@ flowchart LR
   MD <--> AT[modem.AtChannel]
   AT <--> TR[SerialTransport / SimulatedModem]
   TR <--> HW[(SIM7600)]
-  BR <--> CAM[camera.CameraService]
-  CAM <--> FF[ffmpeg / V4L2]
   BR <--> VC[voice_call.CallVoiceSession]
   BR <--> BUS[EventBus]
   BUS --> API[FastAPI REST + SSE]
@@ -30,8 +28,6 @@ flowchart LR
 | `modem/sim7600.py` | Высокоуровневые операции, состояние звонка, watchdog |
 | `modem/pdu.py` | GSM 03.38/03.40: SMS-SUBMIT/DELIVER, UDH, SCTS |
 | `modem/mock.py` | Полный симулятор модема для демо и тестов |
-| `camera/backend.py` | ffmpeg-процесс, JPEG-парсер, запись клипов |
-| `camera/service.py` | Кадры, MJPEG-подписчики, снимки, движение |
 | `voice_call.py` | Голосовой диалог с абонентом: VAD, `audio.start`/PCM/`audio.end`, проигрывание `audio.url` |
 | `audio_bridge.py` | arecord/aplay ↔ PCM 16 кГц для intercom (bridge mode) |
 | `bridge.py` | Политики, маршрутизация команд/событий, журналы |
@@ -78,7 +74,6 @@ sequenceDiagram
   S->>S: локальная политика reject?
   S->>B: call.incoming {number, known}
   B->>C: call.incoming
-  B->>B: снимок камеры (snapshot_on_ring)
   opt bridge_room задан и номер известен
     B->>S: ATA
     B->>C: call.bridge {room, call_number}
@@ -137,7 +132,6 @@ stateDiagram-v2
   `state/athena_state.json`; повторный id получает сохранённый ack без выполнения.
 - **Очереди кадров**: SSE-подписчики имеют буфер 200; медленный клиент теряет
   старые события, но не блокирует остальных.
-- **Камера**: ffmpeg перезапускается с backoff; отсутствие кадра не влияет на
   телефонию. Снимок при звонке делается в фоне (`create_task`).
 
 ## Потоки и блокировки
@@ -155,7 +149,6 @@ stateDiagram-v2
 ```
 data/                    # state_dir
 ├── athena_state.json    # last_command_id
-├── snapshots/*.jpg      # снимки (ring/api)
 └── clips/*.mp4          # видеоклипы
 ```
 
@@ -165,6 +158,5 @@ data/                    # state_dir
 
 - Ядро доверяет GSM-endpoint (v1): политика звонков и SMS-команд — локальная.
 - Локальный API — отдельный доверенный контур (HA). Bearer-токен обязателен,
-  кроме `allow_anonymous_camera`.
 - В логи маскируются номера и не пишутся PDU/тексты SMS. AT-журнал (50 строк)
   доступен только через `/api/diagnostics` с токеном.

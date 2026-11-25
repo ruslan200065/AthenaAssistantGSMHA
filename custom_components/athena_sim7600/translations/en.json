@@ -42,56 +42,113 @@
   },
   "entity": {
     "sensor": {
-      "modem_state": { "name": "Modem state" },
-      "signal_dbm": { "name": "Signal level" },
-      "signal_percent": { "name": "Signal" },
-      "operator": { "name": "Operator" },
-      "network": { "name": "Network" },
-      "registration": { "name": "Registration" },
-      "sim_state": { "name": "SIM" },
-      "model": { "name": "Model" },
-      "firmware": { "name": "Firmware" },
-      "imei": { "name": "IMEI" },
-      "iccid": { "name": "ICCID" },
-      "phone_number": { "name": "SIM number" },
-      "uptime": { "name": "Uptime" },
-      "sms_sent": { "name": "SMS sent" },
-      "sms_received": { "name": "SMS received" },
-      "last_sms": { "name": "Last SMS" },
-      "camera_state": { "name": "Camera" },
-      "athena_connection": { "name": "Athena" }
+      "modem_state": {
+        "name": "Modem state"
+      },
+      "signal_dbm": {
+        "name": "Signal level"
+      },
+      "signal_percent": {
+        "name": "Signal"
+      },
+      "operator": {
+        "name": "Operator"
+      },
+      "network": {
+        "name": "Network"
+      },
+      "registration": {
+        "name": "Registration"
+      },
+      "sim_state": {
+        "name": "SIM"
+      },
+      "model": {
+        "name": "Model"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "imei": {
+        "name": "IMEI"
+      },
+      "iccid": {
+        "name": "ICCID"
+      },
+      "phone_number": {
+        "name": "SIM number"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "sms_sent": {
+        "name": "SMS sent"
+      },
+      "sms_received": {
+        "name": "SMS received"
+      },
+      "last_sms": {
+        "name": "Last SMS"
+      },
+      "athena_connection": {
+        "name": "Athena"
+      }
     },
     "binary_sensor": {
-      "online": { "name": "Gateway online" },
-      "registered": { "name": "Registered on network" },
-      "call_active": { "name": "Call active" },
-      "ringing": { "name": "Incoming call" },
-      "athena_connected": { "name": "Athena connected" },
-      "camera_online": { "name": "Camera online" },
-      "motion": { "name": "Motion" }
+      "online": {
+        "name": "Gateway online"
+      },
+      "registered": {
+        "name": "Registered on network"
+      },
+      "call_active": {
+        "name": "Call active"
+      },
+      "ringing": {
+        "name": "Incoming call"
+      },
+      "athena_connected": {
+        "name": "Athena connected"
+      }
     },
     "button": {
-      "snapshot": { "name": "Take snapshot" },
-      "answer": { "name": "Answer call" },
-      "hangup": { "name": "Hang up" },
-      "reset": { "name": "Restart modem" }
-    },
-    "camera": {
-      "camera": { "name": "Camera" }
+      "answer": {
+        "name": "Answer call"
+      },
+      "hangup": {
+        "name": "Hang up"
+      },
+      "reset": {
+        "name": "Restart modem"
+      }
     },
     "notify": {
-      "sms": { "name": "SMS" }
+      "sms": {
+        "name": "SMS"
+      }
     }
   },
   "services": {
-    "send_sms": { "name": "Send SMS" },
-    "send_ussd": { "name": "Send USSD" },
-    "dial": { "name": "Dial" },
-    "answer_call": { "name": "Answer call" },
-    "hangup_call": { "name": "Hang up" },
-    "reset_modem": { "name": "Restart modem" },
-    "take_snapshot": { "name": "Take snapshot" },
-    "record_clip": { "name": "Record clip" },
-    "bridge_call": { "name": "Bridge call to speaker" }
+    "send_sms": {
+      "name": "Send SMS"
+    },
+    "send_ussd": {
+      "name": "Send USSD"
+    },
+    "dial": {
+      "name": "Dial"
+    },
+    "answer_call": {
+      "name": "Answer call"
+    },
+    "hangup_call": {
+      "name": "Hang up"
+    },
+    "reset_modem": {
+      "name": "Restart modem"
+    },
+    "bridge_call": {
+      "name": "Bridge call to speaker"
+    }
   }
 }

@@ -23,13 +23,6 @@ class AthenaButtonDescription(ButtonEntityDescription):
 
 BUTTONS: tuple[AthenaButtonDescription, ...] = (
     AthenaButtonDescription(
-        key="snapshot",
-        name="Снимок с камеры",
-        translation_key="snapshot",
-        icon="mdi:camera",
-        action=lambda coordinator: coordinator.api.save_snapshot(),
-    ),
-    AthenaButtonDescription(
         key="answer",
         name="Ответить на звонок",
         translation_key="answer",

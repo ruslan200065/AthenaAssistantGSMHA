@@ -14,11 +14,9 @@ from .const import (
     SERVICE_BRIDGE,
     SERVICE_DIAL,
     SERVICE_HANGUP,
-    SERVICE_RECORD,
     SERVICE_RESET,
     SERVICE_SEND_SMS,
     SERVICE_SEND_USSD,
-    SERVICE_SNAPSHOT,
 )
 
 SERVICES = (
@@ -28,8 +26,6 @@ SERVICES = (
     SERVICE_ANSWER,
     SERVICE_HANGUP,
     SERVICE_RESET,
-    SERVICE_SNAPSHOT,
-    SERVICE_RECORD,
     SERVICE_BRIDGE,
 )
 
@@ -101,20 +97,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         except GatewayError as exc:
             raise HomeAssistantError(str(exc)) from exc
 
-    async def handle_snapshot(call: ServiceCall) -> ServiceResponse:
-        runtime = _runtime(hass, call)
-        try:
-            return await runtime.api.save_snapshot()
-        except GatewayError as exc:
-            raise HomeAssistantError(str(exc)) from exc
-
-    async def handle_record(call: ServiceCall) -> ServiceResponse:
-        runtime = _runtime(hass, call)
-        try:
-            return await runtime.api.record(call.data.get("seconds", 12))
-        except GatewayError as exc:
-            raise HomeAssistantError(str(exc)) from exc
-
     async def handle_bridge(call: ServiceCall) -> ServiceResponse:
         runtime = _runtime(hass, call)
         room = call.data.get("room") or None
@@ -157,27 +139,6 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_RESET, handle_reset, schema=vol.Schema(schema_base)
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SNAPSHOT,
-        handle_snapshot,
-        schema=vol.Schema(schema_base),
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_RECORD,
-        handle_record,
-        schema=vol.Schema(
-            {
-                **schema_base,
-                vol.Optional("seconds", default=12): vol.All(
-                    vol.Coerce(float), vol.Range(min=1, max=120)
-                ),
-            }
-        ),
-        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,

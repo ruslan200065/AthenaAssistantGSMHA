@@ -6,7 +6,7 @@ from typing import Any
 
 from .. import PROTOCOL, __version__
 
-GSM_CAPABILITIES = ["calls", "sms", "dtmf", "audio_in", "audio_out", "camera"]
+GSM_CAPABILITIES = ["calls", "sms", "dtmf", "audio_in", "audio_out"]
 
 
 def hello(

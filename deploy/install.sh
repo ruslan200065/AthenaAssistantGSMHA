@@ -17,8 +17,7 @@ python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1
   || { echo "Нужен python3 >= 3.11"; exit 1; }
 python3 -m venv --help >/dev/null 2>&1 \
   || { echo "Нужен пакет python3-venv (apt install python3-venv)"; exit 1; }
-command -v ffmpeg >/dev/null || echo "Внимание: ffmpeg не найден — камера не заработает"
-command -v v4l2-ctl >/dev/null || echo "Внимание: v4l-utils не установлен — автоопределение камеры ограничено"
+command -v ffmpeg >/dev/null || echo "Внимание: ffmpeg не найден — голосовые ответы не будут декодироваться"
 if ! command -v arecord >/dev/null || ! command -v aplay >/dev/null; then
   if command -v apt-get >/dev/null; then
     apt-get update && apt-get install -y --no-install-recommends alsa-utils
@@ -42,7 +41,6 @@ python3 -m venv "$DEST/venv"
 if [ ! -f "$CONF_DIR/config.toml" ]; then
   cp "$SRC/config.example.toml" "$CONF_DIR/config.toml"
   sed -i 's#state_dir = "./data"#state_dir = "/var/lib/sim7600-gateway"#' "$CONF_DIR/config.toml"
-  sed -i 's#snapshot_dir = "./data/snapshots"#snapshot_dir = "/var/lib/sim7600-gateway/snapshots"#' "$CONF_DIR/config.toml"
   API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
   sed -i "s|api_token = \"change-me-please\"|api_token = \"$API_TOKEN\"|" "$CONF_DIR/config.toml"
   echo "Создан $CONF_DIR/config.toml — отредактируйте URL/токен Athena."

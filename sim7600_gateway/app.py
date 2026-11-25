@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +14,6 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .camera.service import mjpeg_headers
 from .config import Config
 from .dashboard import DASHBOARD_HTML
 from .log import get_logger
@@ -24,7 +21,6 @@ from .modem.errors import ModemError
 
 log = get_logger("api")
 
-_CLIP_NAME = re.compile(r"^[A-Za-z0-9_.\-]+\.mp4$")
 
 
 class SmsRequest(BaseModel):
@@ -43,9 +39,6 @@ class DialRequest(BaseModel):
 class DtmfRequest(BaseModel):
     digits: str = Field(min_length=1, max_length=32, pattern=r"^[0-9*#ABCD]+$")
 
-
-class RecordRequest(BaseModel):
-    seconds: float = Field(default=12, ge=1, le=120)
 
 
 class AtRequest(BaseModel):
@@ -73,7 +66,7 @@ def create_app(config: Config) -> FastAPI:
     app = FastAPI(
         title="Athena SIM7600 Gateway",
         version=__version__,
-        description="GSM + camera client for Athena Core and Home Assistant",
+        description="GSM client for Athena Core and Home Assistant",
         lifespan=lifespan,
     )
     app.state.bridge = bridge
@@ -105,7 +98,7 @@ def create_app(config: Config) -> FastAPI:
         # Query tokens leak into access logs/history: allow them only for
         # streaming endpoints (<img>, EventSource) that cannot set headers.
         path = request.url.path
-        if path.startswith("/api/events") or path.startswith("/api/camera/"):
+        if path.startswith("/api/events"):
             return token
         return None
 
@@ -117,10 +110,6 @@ def create_app(config: Config) -> FastAPI:
         if supplied != expected:
             raise HTTPException(status_code=401, detail="invalid API token")
 
-    async def camera_auth(request: Request, token: str | None = Query(default=None)) -> None:
-        if config.bridge.allow_anonymous_camera:
-            return
-        await auth(request, token)
 
     # ── pages and health ─────────────────────────────────────────────────────
 
@@ -285,59 +274,6 @@ def create_app(config: Config) -> FastAPI:
         type: str | None = Query(default=None),
     ) -> list[dict]:
         return bridge.bus.recent(limit, type)
-
-    # ── camera ───────────────────────────────────────────────────────────────
-
-    @app.get("/api/camera/info", dependencies=[Depends(camera_auth)])
-    async def camera_info() -> dict:
-        return bridge.camera.info()
-
-    @app.get("/api/camera/snapshot.jpg", dependencies=[Depends(camera_auth)])
-    async def camera_snapshot(save: bool = Query(default=False)) -> Response:
-        record = None
-        if save:
-            record = await bridge.camera.save_snapshot("api")
-        frame, error = await bridge.camera.snapshot()
-        if frame is None:
-            raise HTTPException(status_code=503, detail=error)
-        response = Response(frame, media_type="image/jpeg")
-        response.headers["Cache-Control"] = "no-store"
-        if record:
-            response.headers["X-Snapshot-File"] = record["filename"]
-        return response
-
-    @app.get("/api/camera/stream.mjpg", dependencies=[Depends(camera_auth)])
-    async def camera_stream() -> StreamingResponse:
-        return StreamingResponse(
-            bridge.camera.mjpeg_stream(),
-            headers=mjpeg_headers(),
-        )
-
-    @app.post("/api/camera/record", dependencies=[Depends(camera_auth)])
-    async def camera_record(body: RecordRequest) -> dict:
-        try:
-            record = await bridge.camera.record(body.seconds)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        if record is None:
-            raise HTTPException(status_code=503, detail="camera is disabled")
-        return record
-
-    @app.get("/api/camera/snapshots", dependencies=[Depends(camera_auth)])
-    async def camera_snapshots() -> list[dict]:
-        return bridge.camera.info().get("snapshots", [])
-
-    @app.get("/api/camera/clips/{name}", dependencies=[Depends(camera_auth)])
-    async def camera_clip(name: str) -> Response:
-        if not _CLIP_NAME.match(name):
-            raise HTTPException(status_code=400, detail="invalid clip name")
-        directory = Path(config.camera.snapshot_dir).expanduser().parent / "clips"
-        path = directory / name
-        if not path.is_file():
-            raise HTTPException(status_code=404, detail="clip not found")
-        from fastapi.responses import FileResponse  # noqa: PLC0415
-
-        return FileResponse(path, media_type="video/mp4", filename=name)
 
     # ── development simulator (only in mock mode) ────────────────────────────
 

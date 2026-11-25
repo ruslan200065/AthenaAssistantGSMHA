@@ -63,20 +63,6 @@ BINARY_SENSORS: tuple[AthenaBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda c: bool((c.data or {}).get("athena", {}).get("connected")),
     ),
-    AthenaBinaryDescription(
-        key="camera_online",
-        name="Камера онлайн",
-        translation_key="camera_online",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        value_fn=lambda c: bool((c.data or {}).get("camera", {}).get("available")),
-    ),
-    AthenaBinaryDescription(
-        key="motion",
-        name="Движение",
-        translation_key="motion",
-        device_class=BinarySensorDeviceClass.MOTION,
-        value_fn=lambda c: c.motion_active,
-    ),
 )
 
 

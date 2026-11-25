@@ -2,7 +2,6 @@
 
 База: `http://<host>:8099`. Авторизация: `Authorization: Bearer <bridge.api_token>`
 или `X-Api-Token: <token>`. Токен в query (`?token=...`) принимается только для
-`/api/events*` и `/api/camera/*` — этого достаточно для `EventSource` и `<img>`.
 
 Ошибки: `{"detail": "..."}` с кодом 401/403/404/422/503. Pydantic-валидация
 тела запроса возвращает 422.
@@ -12,14 +11,14 @@
 ### `GET /api/health` (без токена)
 
 ```json
-{"status":"ok","version":"1.2.7","uptime_sec":120,"mock":false}
+{"status":"ok","version":"1.3.0","uptime_sec":120,"mock":false}
 ```
 
 ### `GET /api/status`
 
 ```json
 {
-  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.2.7","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
+  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.3.0","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
   "modem": {
     "state":"idle","online":true,"sim_ready":true,"sim_state":"READY",
     "registered":true,"registration_status":1,"registration_text":"registered_home",
@@ -29,9 +28,7 @@
     "caller":null,"last_error":null,"uptime_sec":120,
     "sms_sent":2,"sms_received":5,"updated_at":1760000000.0
   },
-  "camera": {"device":"/dev/video0","mock":false,"width":1280,"height":720,"fps":15,
              "pixel_format":"MJPG","available":true,"frames":900,"subscribers":1,
-             "motion_detection":true,"motion_events":3,"snapshots":[...]},
   "athena": {"connected":true,"fatal":null,"last_error":null,"url":"ws://...",
              "home":"Дом","device":"GSM","room":"Прихожая","features":{...},
              "reconnect_attempt":0,"last_command_id":42},
@@ -49,7 +46,6 @@
 ### `GET /api/diagnostics`
 
 Тот же статус плюс последние 50 AT-обменов (номера маскированы), настройки
-модема/камеры и состояние Athena.
 
 ## SMS
 
@@ -123,17 +119,6 @@ serial PCM-порт `pcm_port` или ALSA,
 → {"ok": true, "final": "OK", "lines": ["+CSQ: 24,99"]}
 ```
 
-## Камера
-
-| Метод | Путь | Ответ |
-|---|---|---|
-| GET | `/api/camera/info` | метаданные, счётчики, последние снимки |
-| GET | `/api/camera/snapshot.jpg` | `image/jpeg`, 503 без кадра |
-| GET | `/api/camera/snapshot.jpg?save=true` | + заголовок `X-Snapshot-File` |
-| GET | `/api/camera/stream.mjpg` | `multipart/x-mixed-replace; boundary=athena-frame` |
-| POST | `/api/camera/record` | `{"seconds":12}` → `{path, filename, url}` |
-| GET | `/api/camera/clips/{name}` | `video/mp4` |
-| GET | `/api/camera/snapshots` | список снимков |
 
 ## События (SSE)
 
@@ -156,7 +141,6 @@ Keepalive-комментарий каждые 15 с. Рекомендуется 
 
 Типы: `gateway.start`, `gateway.stop`, `modem.ready`, `modem.error`,
 `call.incoming`, `call.state`, `call.dialing`, `sms.incoming`, `sms.sent`,
-`dtmf`, `device.event`, `command.received`, `camera.motion`, `camera.snapshot`,
 `intercom.ringing`, `intercom.active`, `intercom.ended`, `intercom.frame`,
 `bridge.error`, `core.error`.
 
