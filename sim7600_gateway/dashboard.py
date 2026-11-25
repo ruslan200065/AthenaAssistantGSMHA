@@ -105,6 +105,7 @@ button.danger { border-color:#5a2a2a; color:var(--danger); }
 <div class="toast" id="toast"></div>
 <script>
 const $ = (id) => document.getElementById(id);
+const BASE = window.location.pathname.replace(/\/+$/, '');
 let token = localStorage.getItem('gwToken') || '';
 function headers() { return token ? {'Authorization':'Bearer '+token} : {}; }
 function toast(msg, bad) {
@@ -112,6 +113,7 @@ function toast(msg, bad) {
   el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(()=>el.classList.remove('show'), 3200);
 }
 async function api(path, body) {
+  path = BASE + path;
   const options = {method: body === undefined ? 'GET' : 'POST', headers: {...headers()}};
   if (body !== undefined) { options.headers['Content-Type']='application/json'; options.body = JSON.stringify(body); }
   const response = await fetch(path, options);
@@ -168,11 +170,11 @@ async function refresh() {
     ).join('') : '<span class="muted">Пока нет сообщений</span>';
   } catch (e) { /* keep UI quiet */ }
 }
-$('stream').src = '/api/camera/stream.mjpg' + (token ? '?token='+encodeURIComponent(token) : '');
+$('stream').src = BASE + '/api/camera/stream.mjpg' + (token ? '?token='+encodeURIComponent(token) : '');
 let source;
 function connect() {
   if (source) source.close();
-  const url = '/api/events' + (token ? '?token='+encodeURIComponent(token) : '');
+  const url = BASE + '/api/events' + (token ? '?token='+encodeURIComponent(token) : '');
   source = new EventSource(url);
   source.onmessage = (e) => {
     try { const r = JSON.parse(e.data); addLog(r.type, r.data); } catch (err) {}

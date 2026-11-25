@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p /data/snapshots
+
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+options_path = Path("/data/options.json")
+options = json.loads(options_path.read_text("utf-8")) if options_path.exists() else {}
+
+def q(value) -> str:
+    return json.dumps(str(value), ensure_ascii=False)
+
+def flag(value) -> str:
+    return "true" if value else "false"
+
+numbers = [
+    item.strip()
+    for item in str(options.get("allowed_numbers") or "").replace(";", ",").split(",")
+    if item.strip()
+]
+
+config = f"""
+[bridge]
+name = "GSM-шлюз SIM7600"
+host = "0.0.0.0"
+port = 8099
+api_token = {q(options.get("api_token") or "")}
+log_level = {q(options.get("log_level") or "INFO")}
+state_dir = "/data"
+allow_anonymous_camera = false
+
+[athena]
+enabled = {flag(options.get("athena_enabled", True))}
+url = {q(options.get("athena_url") or "")}
+token = {q(options.get("athena_token") or "")}
+room_hint = ""
+heartbeat_seconds = 20
+verify_tls = true
+
+[modem]
+enabled = true
+port = {q(options.get("modem_port") or "/dev/ttyUSB2")}
+baudrate = 115200
+mock = {flag(options.get("modem_mock", False))}
+unknown_callers = {q(options.get("unknown_callers") or "notify")}
+allowed_numbers = {json.dumps(numbers, ensure_ascii=False)}
+bridge_room = {q(options.get("bridge_room") or "")}
+auto_answer = false
+
+[camera]
+enabled = {flag(options.get("camera_enabled", True))}
+device = {q(options.get("camera_device") or "/dev/video0")}
+mock = {flag(options.get("camera_mock", False))}
+width = 1280
+height = 720
+fps = 15
+input_format = "auto"
+snapshot_on_ring = true
+snapshot_dir = "/data/snapshots"
+motion_detection = true
+motion_threshold = 0.035
+
+[audio_bridge]
+enabled = false
+"""
+
+Path("/data/config.toml").write_text(config, encoding="utf-8")
+print("config.toml written from add-on options")
+PY
+
+exec python3 -m sim7600_gateway -c /data/config.toml
