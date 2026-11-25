@@ -12,14 +12,14 @@
 ### `GET /api/health` (без токена)
 
 ```json
-{"status":"ok","version":"1.2.4","uptime_sec":120,"mock":false}
+{"status":"ok","version":"1.2.5","uptime_sec":120,"mock":false}
 ```
 
 ### `GET /api/status`
 
 ```json
 {
-  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.2.4","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
+  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.2.5","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
   "modem": {
     "state":"idle","online":true,"sim_ready":true,"sim_state":"READY",
     "registered":true,"registration_status":1,"registration_text":"registered_home",
@@ -160,8 +160,8 @@ Keepalive-комментарий каждые 15 с. Рекомендуется 
 `intercom.ringing`, `intercom.active`, `intercom.ended`, `intercom.frame`,
 `bridge.error`, `core.error`.
 
-Голосовые события (`audio.start`, `audio.end`, `assistant.reply`, `audio.url`,
-`playback.stopped`, `conversation.end`) идут в WebSocket ядра и в диагностику;
+Голосовые события (`audio.start`, `audio.end`, `assistant.reply`, `audio.url` (части),
+`audio.done`, `playback.stopped`, `conversation.end`) идут в WebSocket ядра и в диагностику;
 в SSE публикуются только служебные статусы `voice.*` при их наличии.
 
 ## Симулятор (только `modem.mock=true`)

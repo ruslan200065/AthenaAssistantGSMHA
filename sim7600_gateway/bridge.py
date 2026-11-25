@@ -343,8 +343,10 @@ class GatewayBridge:
             return False, result.error
         if not await self._start_voice_call():
             error = self.voice.status.get("last_error") or "voice audio setup failed"
+            # The call is already answered, so the protocol ack is done; the
+            # core must know the line ended rather than stay in a silent call.
             await self.modem.hangup()
-            return False, error
+            return True, error
         return True, None
 
     async def _bridge_failed(self, error: str) -> None:
@@ -456,6 +458,8 @@ class GatewayBridge:
                     }
                 self._bridge_pending = False
                 self._cancel_bridge_timeout()
+                if error:
+                    return {"status": "done", "mode": "assistant", "warning": error}
                 return {"status": "done"}
             if action == "hangup":
                 result = await self.modem.hangup()

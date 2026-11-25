@@ -109,7 +109,7 @@ def test_audio_start_has_real_sample_rate() -> None:
     asyncio.run(scenario())
 
 
-def test_duplicate_audio_url_is_ignored() -> None:
+def test_multi_part_audio_url_plays_in_order_then_done() -> None:
     async def scenario() -> None:
         async def send_json(frame: dict) -> bool:
             return True
@@ -118,20 +118,74 @@ def test_duplicate_audio_url_is_ignored() -> None:
             return None
 
         session = CallVoiceSession(AudioBridgeConfig(enabled=True), send_json, send_binary)
+        session._active = True
+        session._reply = {"text": "answer", "listen": False, "end": True}
         played: list[str] = []
+        after: list[int] = []
 
-        async def fake_inner(frame: dict) -> None:
-            played.append(str(frame.get("utterance_id")))
+        async def fake_play(frame: dict) -> None:
+            played.append(str(frame.get("url")))
 
-        session._play_url_inner = fake_inner  # type: ignore[method-assign]
+        async def fake_after() -> None:
+            after.append(1)
+
+        session._play_url_frame = fake_play  # type: ignore[method-assign]
+        session._after_playback = fake_after  # type: ignore[method-assign]
         try:
-            await session._play_url({"utterance_id": "u1", "url": "http://x/1"})
-            await session._play_url({"utterance_id": "u1", "url": "http://x/1"})
-            assert played == ["u1"]
+            await session.handle_frame(
+                {"type": "audio.url", "utterance_id": "u1", "part": 1, "url": "a"}
+            )
+            await session.handle_frame(
+                {"type": "audio.url", "utterance_id": "u1", "part": 2, "url": "b"}
+            )
+            # Exact duplicate part must not be played again.
+            await session.handle_frame(
+                {"type": "audio.url", "utterance_id": "u1", "part": 2, "url": "b"}
+            )
+            assert after == []
+            await session.handle_frame(
+                {"type": "audio.done", "utterance_id": "u1", "parts": 2}
+            )
+            assert session._audio_task is not None
+            await asyncio.wait_for(session._audio_task, 1)
+            assert played == ["a", "b"]
+            assert after == [1]
+        finally:
+            await session.stop()
 
-            session._fallback_spoken_for = "u2"
-            await session._play_url({"utterance_id": "u2", "url": "http://x/2"})
-            assert played == ["u1"]
+    asyncio.run(scenario())
+
+
+def test_legacy_single_audio_url_ends_after_playback() -> None:
+    async def scenario() -> None:
+        async def send_json(frame: dict) -> bool:
+            return True
+
+        async def send_binary(frame: bytes) -> None:
+            return None
+
+        session = CallVoiceSession(AudioBridgeConfig(enabled=True), send_json, send_binary)
+        session._active = True
+        session._reply = {"text": "answer", "listen": False, "end": True}
+        played: list[str] = []
+        after: list[int] = []
+
+        async def fake_play(frame: dict) -> None:
+            played.append(str(frame.get("url")))
+
+        async def fake_after() -> None:
+            after.append(1)
+
+        session._play_url_frame = fake_play  # type: ignore[method-assign]
+        session._after_playback = fake_after  # type: ignore[method-assign]
+        try:
+            await session.handle_frame(
+                {"type": "audio.url", "utterance_id": "u2", "url": "solo"}
+            )
+            assert session._audio_task is not None
+            await asyncio.wait_for(session._audio_task, 1)
+            assert played == ["solo"]
+            assert after == [1]
         finally:
             await session.stop()
 

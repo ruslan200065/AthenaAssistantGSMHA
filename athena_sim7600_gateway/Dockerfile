@@ -14,7 +14,7 @@ COPY config.yaml /tmp/addon-config.yaml
 
 # Pin the gateway release instead of building an unpredictable `main`.
 # The tag must match the gateway version (config.yaml/manifest.json).
-ARG GATEWAY_REF=v1.2.4
+ARG GATEWAY_REF=v1.2.5
 RUN pip install --no-cache-dir \
     "git+https://github.com/ruslan200065/AthenaAssistantGSMHA.git@${GATEWAY_REF}"
 

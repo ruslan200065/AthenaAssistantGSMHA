@@ -111,7 +111,11 @@ class CallVoiceSession:
         self._reply_audio_pending = False
         self._reply_utterance_id: str | None = None
         self._fallback_spoken_for: str | None = None
-        self._played_utterances: deque[str] = deque(maxlen=8)
+        self._seen_audio_parts: set[tuple[str, str, str]] = set()
+        self._last_audio_frame: dict[str, Any] | None = None
+        self._reply_completed = False
+        self._audio_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._audio_task: asyncio.Task | None = None
         self._timeout_task: asyncio.Task | None = None
         self._reply_wait_task: asyncio.Task | None = None
         self._play_lock = asyncio.Lock()
@@ -290,12 +294,17 @@ class CallVoiceSession:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._tasks.clear()
-        for timer in (self._reply_task, self._timeout_task, self._reply_wait_task):
+        for timer in (self._reply_task, self._timeout_task, self._reply_wait_task, self._audio_task):
             if timer is not None:
                 timer.cancel()
         self._reply_task = None
         self._timeout_task = None
         self._reply_wait_task = None
+        self._audio_task = None
+        self._reply_completed = True
+        while not self._audio_queue.empty():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._audio_queue.get_nowait()
         self._pre_roll.clear()
         self._reply = None
         self._playing = False
@@ -323,6 +332,9 @@ class CallVoiceSession:
             self._reply = frame
             self._reply_utterance_id = str(frame.get("utterance_id") or "") or None
             self._fallback_spoken_for = None
+            self._seen_audio_parts.clear()
+            self._last_audio_frame = None
+            self._reply_completed = False
             # Do not start a new utterance while TTS is being synthesized or
             # downloaded; playback/follow-up re-enables listening later.
             self._listening = False
@@ -337,7 +349,22 @@ class CallVoiceSession:
                 self._reply_task.cancel()
                 self._reply_task = None
             self._reset_reply_wait()
-            await self._play_url(frame)
+            await self._enqueue_audio(frame)
+            return
+        if kind == "audio.done":
+            if self._reply_task is not None:
+                self._reply_task.cancel()
+                self._reply_task = None
+            if self._reply_completed and (self._audio_task is None or self._audio_task.done()):
+                log.debug("звонок: audio.done после завершённого ответа проигнорирован")
+                return
+            self._reset_reply_wait()
+            log.info(
+                "звонок: audio.done utterance=%s parts=%s",
+                frame.get("utterance_id"),
+                frame.get("parts"),
+            )
+            await self._enqueue_audio(None)
             return
         if kind == "assistant.error":
             log.warning("голосовой цикл: %s — %s", frame.get("code"), frame.get("message"))
@@ -366,7 +393,13 @@ class CallVoiceSession:
         # unavailable, try the device TTS endpoint and then close the turn.
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.sleep(6.0)
-        if not self._active or self._playing or self._reply_audio_pending:
+        if (
+            not self._active
+            or self._playing
+            or self._reply_audio_pending
+            or self._reply_completed
+            or self._seen_audio_parts
+        ):
             return
         # An audio.url may arrive after this task was cancelled but before the
         # event loop notices; never speak the text a second time.
@@ -375,26 +408,56 @@ class CallVoiceSession:
             self._fallback_spoken_for = self._reply_utterance_id
         await self._after_playback()
 
-    async def _play_url(self, frame: dict[str, Any]) -> None:
-        utterance_id = str(frame.get("utterance_id") or "")
-        if utterance_id and utterance_id == self._fallback_spoken_for:
-            log.info("звонок: audio.url %s уже озвучен локальным TTS — пропущен", utterance_id)
-            return
-        if utterance_id and utterance_id in self._played_utterances:
-            log.info("звонок: повторный audio.url %s пропущен", utterance_id)
-            return
-        if self._playing:
-            log.warning("звонок: audio.url пришёл во время воспроизведения — пропущен")
-            return
-        if utterance_id:
-            self._played_utterances.append(utterance_id)
+    async def _enqueue_audio(self, frame: dict[str, Any] | None) -> None:
+        """Queue one audio.url part, or ``None`` for audio.done."""
+        if frame is not None:
+            utterance_id = str(frame.get("utterance_id") or "")
+            if utterance_id and utterance_id == self._fallback_spoken_for:
+                log.info(
+                    "звонок: audio.url %s уже озвучен локальным TTS — пропущен",
+                    utterance_id,
+                )
+                return
+            part = str(frame.get("part") if frame.get("part") is not None else "")
+            url = str(frame.get("url") or "")
+            key = (utterance_id, part, url)
+            if key in self._seen_audio_parts:
+                log.info("звонок: повторный audio.url %s/%s пропущен", utterance_id, part)
+                return
+            self._seen_audio_parts.add(key)
+            self._last_audio_frame = frame
         self._reply_audio_pending = True
-        try:
-            await self._play_url_inner(frame)
-        finally:
-            self._reply_audio_pending = False
+        self._audio_queue.put_nowait(frame)
+        if self._audio_task is None or self._audio_task.done():
+            self._audio_task = asyncio.create_task(self._audio_worker(), name="call-audio")
 
-    async def _play_url_inner(self, frame: dict[str, Any]) -> None:
+    async def _audio_worker(self) -> None:
+        try:
+            while True:
+                frame = await self._audio_queue.get()
+                if frame is None:
+                    self._reply_completed = True
+                    self._reply_audio_pending = False
+                    await self._after_playback()
+                    return
+                self._last_audio_frame = frame
+                await self._play_url_frame(frame)
+                if frame.get("part") is None:
+                    # Legacy single audio.url: it is the whole answer.
+                    self._reply_completed = True
+                    self._reply_audio_pending = False
+                    await self._after_playback()
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("звонок: воспроизведение ответа упало")
+            self._reply_audio_pending = False
+        finally:
+            if self._audio_task is asyncio.current_task():
+                self._audio_task = None
+
+    async def _play_url_frame(self, frame: dict[str, Any]) -> None:
         url = str(frame.get("url") or "").strip()
         text = str(frame.get("text") or (self._reply or {}).get("text") or "")
         if url:
@@ -407,8 +470,10 @@ class CallVoiceSession:
             else:
                 await self._play_encoded(data, _safe_float(frame.get("duration")))
         elif text:
-            await self._play_tts(text)
-        await self._after_playback()
+            # ``url: null`` is the core's way to say "no synthesized audio";
+            # speak the text through the device TTS endpoint once.
+            if await self._play_tts(text):
+                self._fallback_spoken_for = str(frame.get("utterance_id") or "") or None
 
     async def _after_playback(self) -> None:
         if not self._active:
@@ -418,7 +483,11 @@ class CallVoiceSession:
         self._silence_frames = 0
         self._pre_roll.clear()
         self._reset_reply_wait()
-        reply = self._reply or {}
+        reply = dict(self._reply or {})
+        if self._last_audio_frame:
+            for key in ("listen", "end", "follow_up_timeout_seconds", "can_interrupt"):
+                if key in self._last_audio_frame:
+                    reply[key] = self._last_audio_frame[key]
         listen = bool(reply.get("listen"))
         timeout = max(3, _safe_int(reply.get("follow_up_timeout_seconds"), 8) or 8)
         if listen and not reply.get("end", False):
