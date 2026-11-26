@@ -41,6 +41,10 @@ SILENCE_SECONDS = 0.7
 PRE_ROLL_SECONDS = 0.3
 MAX_UTTERANCE_SECONDS = 20.0
 MIN_THRESHOLD = 220.0
+# Barge-in while our own answer is playing: the line is already loud, so the
+# caller has to be clearly louder than the usual speech threshold.
+BARGE_MIN_RMS = 900.0
+BARGE_FRAMES = 4
 MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
 PLAYBACK_REASONS = frozenset({"user", "finished", "error", "transfer", "interrupted"})
 
@@ -255,6 +259,7 @@ class CallVoiceSession:
         self._speaking = False
         self._awaiting_reply = False
         self._interrupted = False
+        self._barge_in = False
         self._reply = None
         self._pre_roll.clear()
         self._capture_ready.clear()
@@ -365,6 +370,20 @@ class CallVoiceSession:
                 frame.get("parts"),
             )
             await self._enqueue_audio(None)
+            return
+        if kind == "assistant.interrupt":
+            # Real barge-in: the caller spoke, stop our answer right now.
+            log.info("звонок: перебивание — останавливаю ответ")
+            self._interrupted = True
+            if self._audio_task is not None and not self._audio_task.done():
+                self._audio_task.cancel()
+            if self._reply_task is not None:
+                self._reply_task.cancel()
+                self._reply_task = None
+            return
+        if kind in ("assistant.pause", "assistant.resume"):
+            # Advisory only: on a phone line the answer keeps playing, the core
+            # resumes or interrupts once it knows whether the speech was real.
             return
         if kind == "assistant.error":
             log.warning("голосовой цикл: %s — %s", frame.get("code"), frame.get("message"))
@@ -593,10 +612,22 @@ class CallVoiceSession:
                 self._notify_stopped("PCM-порт завершился")
 
     async def _process_frame(self, frame: bytes) -> None:
-        if self._playing:
+        level = rms(frame)
+        if self._playing and not self._speaking:
+            # Barge-in: the caller can talk over the answer. Our own audio is
+            # loud in the line, so only clearly louder speech counts.
+            if self._listening:
+                if level > BARGE_MIN_RMS:
+                    self._speech_frames += 1
+                    if self._speech_frames >= BARGE_FRAMES:
+                        self._barge_in = True
+                        await self._begin_utterance()
+                        await self._send_frame(frame)
+                        return
+                else:
+                    self._speech_frames = 0
             self._pre_roll.clear()
             return
-        level = rms(frame)
         if not self._speaking:
             if not self._listening or self._awaiting_reply:
                 self._pre_roll.clear()
@@ -647,8 +678,10 @@ class CallVoiceSession:
                 "sample_rate": self.config.sample_rate,
                 "format": "pcm_s16le",
                 "follow_up": self._follow_up,
+                "barge_in": bool(self._barge_in),
             }
         )
+        self._barge_in = False
         log.info(
             "звонок: речь абонента → audio.start%s",
             " (follow_up)" if self._follow_up else "",
@@ -756,7 +789,9 @@ class CallVoiceSession:
 
     async def _playback_begin(self) -> None:
         self._playing = True
-        self._listening = False
+        # Keep the microphone open: the caller may talk over the answer, and the
+        # core decides whether that was barge-in or just background.
+        self._listening = True
         self._speaking = False
         self._awaiting_reply = False
         self._speech_frames = 0

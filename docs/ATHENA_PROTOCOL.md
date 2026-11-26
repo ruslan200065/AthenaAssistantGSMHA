@@ -18,7 +18,7 @@
   "type": "hello",
   "token": "dev_...",
   "kind": "gsm",
-  "firmware": "sim7600-gateway/1.3.1",
+  "firmware": "sim7600-gateway/1.3.2",
   "hardware": "SIM7600E-H",
   "capabilities": ["calls", "sms", "dtmf", "audio_in", "audio_out"],
   "device_id": "sim7600-gateway-01",
