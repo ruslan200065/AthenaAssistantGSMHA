@@ -492,14 +492,18 @@ _MOJIBAKE_ZONES = (
 def _looks_garbled(text: str) -> bool:
     """True when a decoded SMS has letters but not one Cyrillic letter.
 
-    Russian messages that came out of the wrong alphabet read like «Ωòè!»:
-    letters are there, the word is not.
+    Russian messages that came out of the wrong alphabet read like «Ωòè!» or
+    «Bòp!»: letters are there, the word is not. One accented stretch is enough
+    to suspect the alphabet — a genuine foreign SMS simply fails the UCS-2
+    re-read below and keeps its original text.
     """
     letters = [ch for ch in text if ch.isalpha()]
     if len(letters) < 2:
         return False
     if any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in letters):
         return False
+    if any(ord(ch) >= 0x00A0 for ch in letters):
+        return True
     in_zone = sum(
         1 for ch in letters if any(low <= ord(ch) <= high for low, high in _MOJIBAKE_ZONES)
     )
