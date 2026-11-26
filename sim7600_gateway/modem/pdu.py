@@ -483,6 +483,48 @@ def _sms_alphabet(dcs: int) -> str:
     return "gsm7"
 
 
+_MOJIBAKE_ZONES = (
+    (0x00A0, 0x024F),  # Latin-1 letters and extended Latin
+    (0x0370, 0x03FF),  # Greek
+)
+
+
+def _looks_garbled(text: str) -> bool:
+    """True when a decoded SMS has letters but not one Cyrillic letter.
+
+    Russian messages that came out of the wrong alphabet read like «Ωòè!»:
+    letters are there, the word is not.
+    """
+    letters = [ch for ch in text if ch.isalpha()]
+    if len(letters) < 2:
+        return False
+    if any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in letters):
+        return False
+    in_zone = sum(
+        1 for ch in letters if any(low <= ord(ch) <= high for low, high in _MOJIBAKE_ZONES)
+    )
+    return in_zone >= max(2, len(letters) // 2)
+
+
+def _try_ucs2(ud: bytes, header_len: int, udhi: bool) -> str | None:
+    """Re-read the body as UTF-16BE when the GSM-7 reading made no sense."""
+    body = ud[header_len:] if udhi else ud
+    if len(body) < 4 or len(body) % 2:
+        body = body[: len(body) - (len(body) % 2)]
+    if not body:
+        return None
+    try:
+        candidate = body.decode("utf-16-be")
+    except UnicodeDecodeError:
+        return None
+    letters = [ch for ch in candidate if ch.isalpha()]
+    if not letters:
+        return None
+    if any("а" <= ch.lower() <= "я" or ch.lower() == "ё" for ch in letters):
+        return candidate
+    return None
+
+
 def parse_deliver(pdu_hex: str) -> DeliverSms:
     """Decode an SMS-DELIVER PDU (hex string, with SMSC field)."""
     raw = pdu_hex.strip().replace(" ", "").upper()
@@ -541,6 +583,13 @@ def parse_deliver(pdu_hex: str) -> DeliverSms:
         else:
             septets = septets[:udl]
         text = _decode_septets(septets)
+        # Some operators send UCS2 text under a GSM-7 data coding scheme. The
+        # result reads as Greek/Latin gibberish («Ωòè!» instead of «Это!»), so
+        # when that happens try the bytes as UTF-16 once more.
+        if _looks_garbled(text):
+            fixed = _try_ucs2(ud, header_len, udhi)
+            if fixed:
+                text = fixed
 
     return DeliverSms(
         sender=sender,
