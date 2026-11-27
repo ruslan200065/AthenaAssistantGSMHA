@@ -1,5 +1,5 @@
-[Unit]
-Description=Athena SIM7600 GSM + camera gateway
+﻿[Unit]
+Description=Athena SIM7600 GSM gateway
 Documentation=https://github.com/athena-home/athena
 After=network-online.target
 Wants=network-online.target
@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=simple
 User=sim7600
 Group=dialout
-SupplementaryGroups=video audio
+SupplementaryGroups=audio
 WorkingDirectory=/opt/sim7600-gateway
 Environment=PYTHONUNBUFFERED=1
 Environment=GATEWAY_CONFIG=/etc/sim7600-gateway/config.toml

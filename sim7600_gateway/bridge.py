@@ -422,7 +422,11 @@ class GatewayBridge:
         async def wait_bridge() -> None:
             with contextlib.suppress(asyncio.CancelledError):
                 await asyncio.sleep(BRIDGE_CONFIRM_TIMEOUT)
-            if self._bridge_pending and self.modem.snapshot.call_active:
+            if (
+                self._bridge_pending
+                and self.modem.snapshot.call_active
+                and not self.audio.active
+            ):
                 log.warning("ядро не подтвердило call.bridge за %.0f c", BRIDGE_CONFIRM_TIMEOUT)
                 await self._bridge_failed("call.bridge timeout")
 
