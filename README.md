@@ -54,8 +54,16 @@ python -m sim7600_gateway --mock --no-athena --port 8099
 
 ```bash
 sudo ./deploy/install.sh
-sudo nano /etc/config.toml
+sudo nano /etc/sim7600-gateway/config.toml
 sudo systemctl restart sim7600-gateway
+```
+
+Обновление уже установленного шлюза (конфиг в `/etc/sim7600-gateway` не
+трогается, venv пересобирается):
+
+```bash
+sudo ./deploy/update.sh
+curl -s http://127.0.0.1:8099/api/health   # сверить version
 ```
 
 Docker: `cd deploy && docker compose up -d --build` (пробросьте `/dev/ttyUSB2`,
