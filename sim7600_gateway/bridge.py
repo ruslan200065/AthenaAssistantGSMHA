@@ -316,6 +316,66 @@ class GatewayBridge:
             log.warning("PCM-маршрут не подтвердил запись; продолжаю без блокировки")
         return True
 
+    async def _open_call_audio(self, *, with_voice: bool) -> bool:
+        """Enable the PCM route for an outgoing call the callee has answered."""
+        if not self.config.audio_bridge.enabled:
+            log.warning("звонок: audio_bridge.enabled = false, аудио не открывается")
+            return False
+        if not await self._audio_available():
+            log.warning("звонок: аудио недоступно (%s)", self._audio_error)
+            return False
+        if with_voice and not await self._start_voice_call():
+            log.warning("звонок: голосовой цикл не поднялся")
+            return False
+        if not await self._set_pcm(True):
+            log.warning("звонок: не удалось включить PCM-маршрут")
+            return False
+        if not await self.voice.prime():
+            log.warning("PCM-маршрут не подтвердил запись; продолжаю без блокировки")
+        return True
+
+    async def _bridge_after_pickup(self, room: str, endpoint_id: Any) -> None:
+        """Hand an outgoing call to a room speaker once the person answers."""
+        try:
+            for _ in range(60):
+                await asyncio.sleep(1.0)
+                if getattr(self.modem.snapshot, "call_active", False):
+                    opened = await self._open_call_audio(with_voice=False)
+                    bridged = await self.start_bridge(room, endpoint_id)
+                    if not bridged.get("ok"):
+                        if opened:
+                            await self._set_pcm(False)
+                        log.warning(
+                            "звонок: не удалось соединить с колонкой: %s", bridged.get("error")
+                        )
+                    return
+            log.warning("звонок: не дождались ответа, соединять нечего")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("звонок: соединение с колонкой упало")
+
+    async def _say_after_pickup(self, text: str) -> None:
+        """Wait for the callee to answer an outgoing call, then speak ``text``."""
+        try:
+            for _ in range(60):
+                await asyncio.sleep(1.0)
+                snapshot = self.modem.snapshot
+                if getattr(snapshot, "call_active", False):
+                    if await self._start_voice_call():
+                        if await self.voice.say(text):
+                            log.info("звонок: сообщение передано голосом")
+                        else:
+                            log.warning("звонок: не удалось передать сообщение голосом")
+                    else:
+                        log.warning("звонок: голосовой цикл не поднялся, сообщение не передано")
+                    return
+            log.warning("звонок: сообщение не передано, линия не поднялась")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("звонок: не удалось передать сообщение голосом")
+
     async def _stop_voice_call(self) -> None:
         was_active = self.voice.active
         await self.voice.stop()
@@ -395,6 +455,26 @@ class GatewayBridge:
                     self._calls_log.append(
                         {"direction": "out", "number": number, "at": now_iso(), "state": "dialing"}
                     )
+                    say = str(payload.get("say") or "").strip()
+                    if say:
+                        # «Позвони Руслану и скажи, что…»: the message is spoken
+                        # into the line as soon as the person picks up.
+                        asyncio.create_task(self._say_after_pickup(say), name="call-say")
+                    wants_bridge = (
+                        str(payload.get("mode") or "") == "bridge"
+                        or bool(payload.get("bridge_room"))
+                        or bool(payload.get("bridge_endpoint_id"))
+                    )
+                    if wants_bridge:
+                        # «Позвони маме и соедини с кухней»: once the person
+                        # answers, the line is handed to the room speaker.
+                        asyncio.create_task(
+                            self._bridge_after_pickup(
+                                str(payload.get("bridge_room") or ""),
+                                payload.get("bridge_endpoint_id"),
+                            ),
+                            name="call-bridge",
+                        )
                     return {"status": "done"}
                 return {"status": "failed", "error": result.error or "dial failed"}
             if action == "answer":

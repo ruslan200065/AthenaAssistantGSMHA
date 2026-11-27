@@ -11,14 +11,14 @@
 ### `GET /api/health` (без токена)
 
 ```json
-{"status":"ok","version":"1.3.3","uptime_sec":120,"mock":false}
+{"status":"ok","version":"1.3.4","uptime_sec":120,"mock":false}
 ```
 
 ### `GET /api/status`
 
 ```json
 {
-  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.3.3","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
+  "gateway": {"name":"GSM-шлюз SIM7600","version":"1.3.4","uptime_sec":120,"mock":false,"time":"...","config_source":"config.toml"},
   "modem": {
     "state":"idle","online":true,"sim_ready":true,"sim_state":"READY",
     "registered":true,"registration_status":1,"registration_text":"registered_home",

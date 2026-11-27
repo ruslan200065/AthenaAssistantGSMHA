@@ -485,6 +485,13 @@ class CallVoiceSession:
             if self._audio_task is asyncio.current_task():
                 self._audio_task = None
 
+    async def say(self, text: str) -> bool:
+        """Speak a short message into the line (used after an outgoing pickup)."""
+        text = (text or "").strip()
+        if not text:
+            return False
+        return await self._play_tts(text)
+
     async def _play_url_frame(self, frame: dict[str, Any]) -> None:
         url = str(frame.get("url") or "").strip()
         text = str(frame.get("text") or (self._reply or {}).get("text") or "")

@@ -18,7 +18,7 @@
   "type": "hello",
   "token": "dev_...",
   "kind": "gsm",
-  "firmware": "sim7600-gateway/1.3.3",
+  "firmware": "sim7600-gateway/1.3.4",
   "hardware": "SIM7600E-H",
   "capabilities": ["calls", "sms", "dtmf", "audio_in", "audio_out"],
   "device_id": "sim7600-gateway-01",
@@ -56,7 +56,7 @@
 
 | kind | payload | Действие | ack |
 |---|---|---|---|
-| `call` | `{action:"dial", number, call_id}` | `ATD<number>;` | `done` после принятия модемом |
+| `call` | `{action:"dial", number, call_id, say?, mode?, bridge_room?, bridge_endpoint_id?}` | `ATD<number>;`, затем после ответа — TTS `say` и/или `call.bridge` | `done` после принятия модемом |
 | `call` | `{action:"answer", number, call_id, mode?, bridge_room?, bridge_endpoint_id?}` | `ATA` + голосовой цикл или `call.bridge` | `done`; `failed`, если аудио недоступно |
 | `call` | `{action:"hangup", number, call_id}` | `AT+CHUP` (fallback `ATH`) | `done`, затем `call.state ended` |
 | `call` | `{number, reason:"reminder"/"automation", text}` | `ATD<number>;` | `done` |
@@ -92,6 +92,27 @@
   ассистент; если звонок уже завершён — `failed`.
 
 Подробный сценарий — [CALL_VOICE.md](CALL_VOICE.md).
+
+### Исходящий звонок: `say` и мост после ответа
+
+```json
+{"type":"command","id":44,"kind":"call","payload":{
+  "call_id":9,"number":"+79991234567","action":"dial",
+  "say":"я задержусь на десять минут"
+}}
+```
+
+- `ATD<number>;` → `command.ack done` сразу, ответ абонента ждётся в фоне
+  (до 60 с).
+- Как только звонок стал `active`, шлюз поднимает голосовой цикл (PCM-маршрут,
+  `prime`) и произносит `say` через TTS ядра; дальше идёт обычное общение с
+  Афиной (`audio.start`/`audio.end`, ответы `audio.url`).
+- `mode:"bridge"` / `bridge_room` / `bridge_endpoint_id` в `dial` — после ответа
+  вместо голоса отправляется `call.bridge`, PCM идёт в intercom-сессию.
+- `mode:"assistant"` или пустой payload — только дозвон, без голоса и моста.
+- Если абонент не ответил за 60 с, фоновая задача пишет warning; звонок снимает
+  ядро командой `hangup`.
+
 
 ### Формат ack
 
